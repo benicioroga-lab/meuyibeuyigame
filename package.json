@@ -1,0 +1,11 @@
+{
+  "name": "meyui-beuyi-caos-no-rio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Meyui Beuyi: Caos no Rio — aventura 3D cartunesca de coleta e destruição",
+  "scripts": {
+    "start": "node server.cjs",
+    "dev": "node server.cjs"
+  },
+  "engines": { "node": ">=18" }
+}

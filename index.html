@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#10243a" />
+    <meta name="description" content="Meyui Beuyi: Caos no Rio — uma aventura canina de exploração e caos cartunesco." />
+    <title>Meyui Beuyi: Caos no Rio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="game-shell" aria-label="Meyui Beuyi: Caos no Rio">
+      <canvas id="game" aria-label="Mundo 3D do jogo"></canvas>
+      <div class="sky-vignette" aria-hidden="true"></div>
+      <header class="hud-top">
+        <div class="game-logo" aria-label="Meyui Beuyi: Caos no Rio"><span class="logo-bone">◆</span><span><b>MEYUI BEUYI</b><small>CAOS NO RIO</small></span></div>
+        <div class="district-card"><span class="pin">●</span><div><small>REGIÃO ATUAL</small><b id="regionName">Praia do Petisco</b></div><span class="weather" id="weatherIcon">☀</span></div>
+        <div class="currency-stack"><div class="currency coin"><span>●</span><b id="coins">250</b></div><div class="currency cosmic"><span>✦</span><b id="cosmic">0</b></div></div>
+      </header>
+      <section class="hud-left" aria-label="Status da aventura">
+        <div class="level-card panel"><div class="level-orb"><span id="level">1</span><small>NV</small></div><div class="xp-wrap"><div class="label-line"><b>Meyui Beuyi</b><span id="xpLabel">0 / 100 XP</span></div><div class="meter xp-meter"><i id="xpFill"></i></div></div></div>
+        <div class="stat-card panel"><div class="stat-icon snack">◆</div><div><small>PETISCOS ENCONTRADOS</small><b><span id="treats">0</span> <em>/ 120</em></b></div><button class="mini-help" id="mapButton" aria-label="Abrir mapa">⌁</button></div>
+        <div class="stat-card panel"><div class="stat-icon chaos">✹</div><div><small>PODER DE DESTRUIÇÃO</small><b>NV. <span id="power">1</span> <em id="powerName">— caixa</em></b></div></div>
+        <div class="stat-card panel multiplier"><div class="stat-icon multi">×</div><div><small>MULTIPLICADOR</small><b id="multiplier">x1.0</b></div><span class="hot">QUENTE!</span></div>
+      </section>
+      <section class="objective-card panel" aria-label="Objetivo atual"><div class="objective-top"><span class="section-kicker">FARO ATUAL</span><span class="pulse-dot"></span></div><h2 id="objectiveTitle">Encontre petiscos pela Praia</h2><p id="objectiveText">Explore o calçadão e siga o brilho dourado.</p><div class="meter objective-meter"><i id="objectiveFill" style="width:0%"></i></div><div class="objective-bottom"><span id="objectiveProgress">0 / 15</span><button id="missionButton">MISSÕES <b>›</b></button></div></section>
+      <section class="boss-hud" id="bossHud" hidden aria-label="Chefe do Morro"><div><span>CHEFE DO MORRO</span><b>Melzinha, a Rainha do Morro</b></div><div class="boss-meter"><i id="bossFill" style="width:100%"></i></div></section>
+      <section class="hint-bar" id="hintBar"><span class="key">WASD / ↑↓←→</span><span>andar</span><span class="key">MOUSE</span><span>câmera</span><span class="key">BOTÃO DIR.</span><span>mira FPS</span><span class="key">CLIQUE</span><span>disparar</span></section>
+      <nav class="action-dock panel" aria-label="Ações do jogo"><button class="dock-button" id="sniffButton"><span class="dock-icon sniff-icon">⌁</span><b>Farejar</b><small>Q</small></button><button class="dock-button ability-main" id="barkButton"><span class="dock-icon">✹</span><b>Latido<br/>Sísmico</b><small>E</small><i class="cooldown" id="barkCooldown"></i></button><button class="dock-button" id="digButton"><span class="dock-icon">⌄</span><b>Escavar</b><small>F</small></button><button class="dock-button" id="upgradeButton"><span class="dock-icon">↑</span><b>Melhorar</b><small>U</small><i class="upgrade-alert">!</i></button></nav>
+      <section class="mobile-controls" aria-label="Controles para toque"><div class="joystick" id="joystick"><i></i></div><div class="mobile-actions"><button id="mobileJump">↑</button><button id="mobileBark">✹</button></div></section>
+      <div class="crosshair" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div class="aim-tip" id="aimTip">MIRA DE PETISCO • CLIQUE PARA DISPARAR</div><div class="event-banner" id="eventBanner" role="status"><span>☄</span><div><small>EVENTO ALEATÓRIO</small><b id="eventText">Chuva de petiscos chegando!</b></div></div><div class="toast" id="toast" role="status" aria-live="polite"></div>
+      <section class="screen-overlay" id="startScreen"><div class="start-card"><div class="sun-doodle">☀</div><div class="dog-mark" aria-hidden="true"><span class="ear left"></span><span class="ear right"></span><span class="face"><i></i><i></i><b></b></span></div><p class="section-kicker">AVENTURA 3D • RIO FICTÍCIO</p><h1>MEYUI BEUYI<em>CAOS NO RIO</em></h1><p class="start-copy">Petiscos desapareceram pela cidade. Um salsichinha determinado vai farejar cada um — e talvez derrubar umas coisinhas pelo caminho.</p><button class="start-button" id="startButton">COMEÇAR A FAREJAR <span>→</span></button><p class="start-foot">WASD / SETAS • ARRASTE O MOUSE • BOTÃO DIREITO PARA MIRAR</p></div></section>
+      <aside class="drawer upgrade-drawer" id="upgradeDrawer" aria-labelledby="upgradeTitle" hidden><div class="drawer-head"><div><span class="section-kicker">OFICINA DO AU-MENTO</span><h2 id="upgradeTitle">Fique <em>absurdo.</em></h2></div><button class="close-button" data-close="upgradeDrawer" aria-label="Fechar">×</button></div><div class="upgrade-summary"><span>MOEDAS DISPONÍVEIS</span><b><i>●</i> <span id="drawerCoins">250</span></b></div><div class="upgrade-list" id="upgradeList"></div><div class="prestige-card"><span>✦</span><div><b>Prestígio Canino</b><p>Disponível ao chegar no nível 20.</p></div><button id="prestigeButton" disabled>INDISPONÍVEL</button></div></aside>
+      <aside class="drawer mission-drawer" id="missionDrawer" aria-labelledby="missionTitle" hidden><div class="drawer-head"><div><span class="section-kicker">TAREFAS DE BOM CACHORRO</span><h2 id="missionTitle">Missões <em>caninas</em></h2></div><button class="close-button" data-close="missionDrawer" aria-label="Fechar">×</button></div><div class="mission-list" id="missionList"></div><div class="secrets-card"><span>?</span><div><b>Segredo no Pão de Açúcar?</b><p>“Somente quem fareja a lua encontrará a porta que nunca esteve lá.”</p></div></div></aside>
+      <aside class="drawer map-drawer" id="mapDrawer" aria-labelledby="mapTitle" hidden><div class="drawer-head"><div><span class="section-kicker">GUIA DE EXPLORAÇÃO</span><h2 id="mapTitle">Mapa da <em>bagunça</em></h2></div><button class="close-button" data-close="mapDrawer" aria-label="Fechar">×</button></div><div class="map-illustration"><span class="map-island">ILHA DO OSSO</span><button class="map-area active"><b>1</b> Praia do Petisco <i>0/30</i></button><button class="map-area"><b>2</b> Ruas da Confusão <i>🔒 30</i></button><button class="map-area"><b>3</b> Centro do Caos <i>🔒 60</i></button><button class="map-area"><b>4</b> Morro do Mistério <i>🔒 90</i></button></div></aside>
+    </main>
+    <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js"}}</script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
