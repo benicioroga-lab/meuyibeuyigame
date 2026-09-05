@@ -5,7 +5,14 @@
   "description": "Meyui Beuyi: Caos no Rio — aventura 3D cartunesca de coleta e destruição",
   "scripts": {
     "start": "node server.cjs",
-    "dev": "node server.cjs"
+    "dev": "node server.cjs",
+    "test": "node --test"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "three": "^0.160.1"
+  },
+  "type": "module"
 }

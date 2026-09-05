@@ -9,7 +9,11 @@ const routes = new Map([
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/experience.js', ['experience.js', 'text/javascript; charset=utf-8']],
 ]);
+for (const name of ['minimap','audio','config','arsenal','navigation','enemies','hit-detection','combat-effects','combat','dog','shop','world-detail']) {
+  routes.set('/systems/'+name+'.js', ['systems/'+name+'.js','text/javascript; charset=utf-8']);
+}
 const assetTypes = new Map([
   ['.fbx', 'application/octet-stream'],
   ['.obj', 'text/plain; charset=utf-8'],
@@ -75,16 +79,19 @@ const server = http.createServer((req, res) => {
 });
 
 let refreshTimer;
-const watcher = fs.watch(__dirname, (event, filename) => {
-  if (!['index.html', 'styles.css', 'app.js'].includes(String(filename))) return;
+function refreshPreview(){
   clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(() => {
-    for (const response of clients) response.write('event: refresh\ndata: updated\n\n');
-  }, 150);
+  refreshTimer=setTimeout(()=>{for(const response of clients)response.write('event: refresh\ndata: updated\n\n');},350);
+}
+const watcher = fs.watch(__dirname, (event, filename) => {
+  if (!['index.html', 'styles.css', 'app.js', 'experience.js'].includes(String(filename))) return;
+  refreshPreview();
 });
+const systemWatcher=fs.watch(path.join(__dirname,'systems'),(event,filename)=>{if(String(filename).endsWith('.js'))refreshPreview();});
 server.on('error', (error) => {
-  console.error(`Soundframe could not start: ${error.message}`);
+  console.error(`Meyui Beuyi could not start: ${error.message}`);
   watcher.close();
+  systemWatcher.close();
   process.exitCode = 1;
 });
-server.listen(port, host, () => console.log(`Soundframe running at http://${host}:${port} (auto-refresh enabled)`));
+server.listen(port, host, () => console.log(`Meyui Beuyi running at http://${host}:${port} (auto-refresh enabled)`));
