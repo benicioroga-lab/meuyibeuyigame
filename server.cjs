@@ -12,6 +12,8 @@ const routes = new Map([
 ]);
 const assetTypes = new Map([
   ['.fbx', 'application/octet-stream'],
+  ['.obj', 'text/plain; charset=utf-8'],
+  ['.mtl', 'text/plain; charset=utf-8'],
   ['.png', 'image/png'],
   ['.jpg', 'image/jpeg'],
   ['.jpeg', 'image/jpeg'],
@@ -26,7 +28,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(405, { Allow: 'GET, HEAD' });
     return res.end();
   }
-  const pathname = new URL(req.url, `http://${host}:${port}`).pathname;
+  const pathname = decodeURIComponent(new URL(req.url, `http://${host}:${port}`).pathname);
   if (pathname === '/__updates' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write(': connected\n\n');

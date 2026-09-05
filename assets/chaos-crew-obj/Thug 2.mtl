@@ -1,0 +1,14 @@
+# Exported from Nomad Sculpt
+
+newmtl thug_2_skin
+ map_Kd thug_2_color.png
+ map_roughness thug_2_roughness.png
+
+newmtl thug_2_hair
+ map_Kd Thug_2_obj/thug_2_hair.png
+
+newmtl thug_2_eyeball
+ map_Kd Thug_2_obj/thug_2_skin_lc.png
+
+newmtl thug_2_fabric
+ map_Kd Thug_2_obj/thug_2_fabric_lc.png
