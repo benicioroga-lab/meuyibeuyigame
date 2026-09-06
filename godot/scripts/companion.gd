@@ -6,6 +6,8 @@ const ActorVisual = preload("res://scripts/actor_visual.gd")
 const Data = preload("res://data/dog_data.gd")
 
 var game: Node
+var network_peer_id := 1
+var network_replica := false
 var health: float = 70.0
 var max_health: float = 70.0
 var level: int = 1
@@ -14,7 +16,9 @@ var follow_only: bool = false
 var damage: float = 12.0
 var attack_interval: float = 1.6
 var archetype: String = "combat"
-var levels: Dictionary = {"attack": 0, "survival": 0, "loot": 0, "support": 0}
+var levels: Dictionary = {"attack":0, "survival":0, "loot":0, "support":0, "elemental":0, "control":0, "resupply":0, "bond":0}
+var element: String = "shock"
+var _resupply_timer := 20.0
 var owned_archetypes: Array[String] = ["combat"]
 var shield: float = 0.0
 var shield_max: float = 0.0
@@ -173,13 +177,13 @@ func get_progression() -> Dictionary:
 		var upgraded: Dictionary = levels.duplicate()
 		upgraded[id] = int(upgraded[id]) + 1
 		var next_stats: Dictionary = Data.stats(upgraded, archetype)
-		var stat: String = {"attack": "damage", "survival": "max_health", "loot": "loot_radius", "support": "heal"}[id]
+		var stat: String = {"attack":"damage", "survival":"max_health", "loot":"loot_radius", "support":"heal", "elemental":"element_power", "control":"stun_duration", "resupply":"ammo_amount", "bond":"bond_heal"}[id]
 		branches.append({"id": id, "name": info["name"], "level": int(levels[id]), "cost": branch_cost(id), "description": info["description"], "value": stats[stat], "next_value": next_stats[stat]})
 	var archetypes: Array[Dictionary] = []
 	for id in Data.ARCHETYPES:
 		var info: Dictionary = Data.ARCHETYPES[id]
 		archetypes.append({"id": id, "name": info["name"], "cost": 0 if owned_archetypes.has(id) else int(info["cost"]), "owned": owned_archetypes.has(id), "unlocked": owned_archetypes.has(id), "active": archetype == id, "description": info["description"]})
-	return {"archetype": archetype, "name": Data.ARCHETYPES[archetype]["name"], "level": level, "levels": levels.duplicate(),
+	return {"archetype": archetype, "element":element, "name": Data.ARCHETYPES[archetype]["name"], "level": level, "levels": levels.duplicate(),
 		"branches": branches, "archetypes": archetypes, "owned_archetypes": owned_archetypes.duplicate(), "stats": stats.duplicate(),
 		"damage": damage, "health": health, "max_health": max_health, "shield": shield,
 		"revive_cooldown": _revive_cooldown, "revive_ready": _can_revive() and _revive_cooldown <= 0.0, "status": get_status()}
@@ -195,7 +199,8 @@ func get_status() -> String:
 
 
 func _physics_process(delta: float) -> void:
-	if not is_instance_valid(game) or not game.running or game.paused or not is_instance_valid(game.player):
+	if network_replica: return
+	if not is_instance_valid(game) or not game.running or (game.simulation_paused() if game.has_method("simulation_paused") else game.paused) or not is_instance_valid(game.player):
 		return
 	_hurt_time = maxf(0.0, _hurt_time - delta)
 	_revive_cooldown = maxf(0.0, _revive_cooldown - delta)
@@ -230,7 +235,10 @@ func _physics_process(delta: float) -> void:
 	if _bite_time > 0.0:
 		_bite_time -= delta
 		if _bite_time <= 0.0 and attacking and distance < 1.45 and absf(to_goal.y) < 1.3 and _clear_sight(_enemy_target):
-			_enemy_target.take_damage(damage, "body", "faro")
+			var multiplier := 1.0
+			if game.has_method("get_player_modifiers"): multiplier = float(game.get_player_modifiers().get("dog_damage", 1.0))
+			_enemy_target.take_damage(damage * multiplier, "body", "faro")
+			_apply_bite_traits(_enemy_target)
 			if archetype == "combat" and int(levels["attack"]) >= 2 and is_instance_valid(_enemy_target) and _enemy_target.has_method("apply_status"):
 				_enemy_target.apply_status("shock", 0.18, 0.65)
 			if game.has_method("on_dog_attack"):
@@ -254,6 +262,30 @@ func _physics_process(delta: float) -> void:
 		rotation.y = lerp_angle(rotation.y, atan2(-facing.x, -facing.z), delta * 11.0)
 	_animate(delta)
 
+
+func choose_element(id: String) -> bool:
+	if id not in ["fire", "shock", "cryo"] or int(levels.elemental) < 1: return false
+	element = id
+	_refresh_upgrade_visual()
+	return true
+
+func _apply_bite_traits(target: Node3D) -> void:
+	if not is_instance_valid(target): return
+	if not target.dead:
+		if int(levels.elemental) > 0: target.apply_status("burn" if element == "fire" else element, float(stats.element_power) if element == "fire" else 0.5, 2.5)
+		if float(stats.stun_duration) > 0: target.apply_status("shock", 0.5, float(stats.stun_duration))
+	var remaining := int(stats.cleave_targets)
+	if remaining > 0:
+		for nearby: Node in game.enemies:
+			if remaining <= 0: break
+			if not is_instance_valid(nearby) or nearby == target or nearby.dead: continue
+			if nearby.global_position.distance_to(target.global_position) < 2.6 and _clear_sight(nearby):
+				nearby.take_damage(damage * 0.45, "body", "faro")
+				remaining -= 1
+	if float(stats.bond_heal) > 0:
+		health = minf(max_health, health + float(stats.bond_heal))
+		if global_position.distance_to(game.player.global_position) < 8:
+			game.player.health = minf(game.player.max_health, game.player.health + float(stats.bond_heal))
 
 func _apply_gravity(delta: float) -> void:
 	if not is_on_floor():
@@ -297,6 +329,10 @@ func _clear_sight(target: Node3D) -> bool:
 
 
 func take_damage(amount: float) -> void:
+	if network_replica: return
+	if is_instance_valid(game.get("coop")) and game.coop.is_host() and game.coop.current_peer_id != network_peer_id:
+		game.coop.with_peer(network_peer_id, func(): take_damage(amount))
+		return
 	if _downed_time > 0.0 or amount <= 0.0:
 		return
 	health = maxf(0.0, health - amount * (1.0 - float(stats.get("resistance", 0.0))))
@@ -311,6 +347,10 @@ func take_damage(amount: float) -> void:
 
 
 func _update_abilities(delta: float) -> void:
+	_resupply_timer = maxf(0, _resupply_timer - delta)
+	if _resupply_timer <= 0 and int(stats.get("ammo_amount", 0)) > 0 and global_position.distance_to(game.player.global_position) < 6:
+		game.player.add_ammo(int(stats.ammo_amount))
+		_resupply_timer = float(stats.ammo_interval)
 	_ability_timer -= delta
 	_heal_timer -= delta
 	_taunt_timer -= delta
@@ -372,7 +412,7 @@ func try_revive() -> bool:
 
 
 func export_state() -> Dictionary:
-	return {"version": 2, "archetype": archetype, "levels": levels.duplicate(), "owned_archetypes": owned_archetypes.duplicate(),
+	return {"version": 2, "element":element, "resupply_timer":_resupply_timer, "archetype": archetype, "levels": levels.duplicate(), "owned_archetypes": owned_archetypes.duplicate(),
 		"health": health, "max_health": max_health, "level": level, "mode": mode, "follow_only": follow_only,
 		"position": [global_position.x, global_position.y, global_position.z], "rotation_y": rotation.y,
 		"shield": shield, "shield_delay": _shield_delay, "revive_cooldown": _revive_cooldown, "downed_time": _downed_time,
@@ -380,6 +420,8 @@ func export_state() -> Dictionary:
 
 
 func import_state(state: Dictionary) -> void:
+	element = String(state.get("element", "shock")) if String(state.get("element", "shock")) in ["fire", "shock", "cryo"] else "shock"
+	_resupply_timer = clampf(float(state.get("resupply_timer", 20.0)), 0, 38)
 	for branch in Data.BRANCHES:
 		var saved: Variant = state.get("levels", {})
 		levels[branch] = maxi(0, int(saved.get(branch, 0))) if saved is Dictionary else 0
@@ -480,6 +522,17 @@ func _refresh_gear(color: Color) -> void:
 	_gear.name = "FaroEquipment"
 	_model.add_child(_gear)
 	_shield_visual = null
+	if int(levels.elemental) > 0:
+		var element_color: Color = {"fire":Color("ef9c68"), "shock":Color("be9ff0"), "cryo":Color("8addf0")}[element]
+		for side: float in [-1.0, 1.0]:
+			_gear_box("ElementCell", Vector3(side * 0.15, 0.51, -0.20), Vector3(0.07, 0.10, 0.13), element_color)
+			var cell := _gear.get_child(_gear.get_child_count() - 1) as MeshInstance3D
+			cell.material_override.emission_enabled = true
+			cell.material_override.emission = element_color
+			cell.material_override.emission_energy_multiplier = 1.2
+	if int(levels.resupply) > 0:
+		for index: int in range(3): _gear_box("AmmoCanister", Vector3(0.18, 0.4, -0.03 + index * 0.09), Vector3(0.07, 0.13, 0.055), Color("c9ac71"))
+	if int(levels.control) > 0: _gear_box("HunterHarness", Vector3(0, 0.38, -0.35), Vector3(0.32, 0.15, 0.09), Color("707f8b"))
 	var tier: int = mini(4, 1 + floori(log(1.0 + float(level - 1)) / log(3.0)))
 	for index in tier:
 		_gear_box("CollarRank", Vector3(0.0, 0.525, -0.28 + float(index) * 0.064), Vector3(0.085, 0.026, 0.028), color.lightened(0.15))

@@ -46,7 +46,7 @@ func _ready() -> void:
 	if kind == "powerup": _tint = Color("acdce0")
 	_base_height = 0.47 if kind == "weapon" else (0.29 if kind == "ammo" else 0.36)
 	_model_scale = 1.12 if kind == "weapon" else (1.45 if kind == "attachment" else 1.0)
-	_beam_height = 1.30 + _rank * 0.29 if kind in ["weapon", "attachment"] else (1.3 if kind == "powerup" else 0.84)
+	_beam_height = (6.2 if _rank == 5 else 4.3 if _rank == 4 else 0.55 + _rank * 0.20) if kind in ["weapon", "attachment"] else (1.3 if kind == "powerup" else 0.60)
 	_pulse = float(posmod(hash(str(payload.get("uid", payload.get("id", kind)))), 1000)) * 0.01
 	_pivot = Node3D.new()
 	_pivot.name = "FloatingPresentation"
@@ -58,22 +58,22 @@ func _ready() -> void:
 	_model.position = -_model.mesh.get_aabb().get_center()
 	_halo = _instance("RarityHalo", _ring_mesh(), self)
 	_halo.position.y = 0.012
-	var radius := 0.57 if kind == "weapon" else 0.38
+	var radius := (1.0 if _rank == 5 else 0.80 if _rank == 4 else 0.36) if kind == "weapon" else 0.30
 	_halo.scale = Vector3.ONE * radius
 	_halo.material_override = _effect_material(_tint, false)
 	_halo.set_meta("radius", radius)
 	_beam = _instance("SoftRarityBeam", _quad_mesh(), self)
 	_beam.position = Vector3(0, _beam_height * 0.5, 0)
-	_beam.scale = Vector3(0.12 + _rank * 0.022, _beam_height, 1)
+	_beam.scale = Vector3(0.65 if _rank == 5 else 0.40 if _rank == 4 else 0.05, _beam_height, 1)
 	_beam.material_override = _soft_beam_material(_tint)
 	_core = _instance("BeamCore", _core_mesh(), self)
 	_core.position.y = _beam_height * 0.5
-	_core.scale = Vector3(0.008 + _rank * 0.0017, _beam_height, 0.008 + _rank * 0.0017)
+	_core.scale = Vector3(0.025 if _rank >= 4 else 0.004, _beam_height, 0.025 if _rank >= 4 else 0.004)
 	_core.material_override = _effect_material(_tint.lightened(0.22), false)
 	_badge = _instance("RaritySymbol", _badge_mesh(kind, _rank), self)
 	_badge.position.y = _beam_height + 0.075
 	_badge.material_override = _effect_material(_tint.lightened(0.1), true)
-	_badge.scale = Vector3.ONE * (0.86 if kind in ["ammo", "currency"] else 1.0)
+	_badge.scale = Vector3.ONE * (1.7 if _rank == 5 else 1.4 if _rank == 4 else 0.7)
 	# Rendering detail never changes pickup amounts or weapon data.
 	set_meta("visual_family", Visuals.family(payload) if kind == "weapon" else kind)
 	set_meta("rarity_rank", _rank)
@@ -108,8 +108,8 @@ func apply_settings(settings: Dictionary) -> void:
 func _refresh_effects() -> void:
 	if not is_instance_valid(_beam): return
 	# Always keep the physical model, halo, and non-color rarity symbol readable.
-	_beam.visible = _near and _effects > 0.2 and kind in ["weapon", "attachment", "powerup"]
-	_core.visible = _near and _effects > 0.05 and (kind in ["weapon", "attachment", "powerup"] or _highlighted)
+	_beam.visible = _near and _effects > 0.2 and (_rank >= 3 or kind == "powerup" or _highlighted)
+	_core.visible = _near and _effects > 0.05 and (_rank >= 4 or kind == "powerup" or _highlighted)
 	_badge.visible = _near
 	_halo.visible = _near
 

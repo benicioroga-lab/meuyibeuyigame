@@ -14,6 +14,10 @@ const HIT_GRACE_SECONDS: float = 0.30
 const WEAPON_IDS: Array[String] = ["biscuit", "boardwalk", "hammer"]
 
 var game: Node
+var network_peer_id := 1
+var network_controlled := false
+var network_replica := false
+var network_input: Dictionary = {}
 var health: float = 100.0
 var max_health: float = 100.0
 var camera: Camera3D
@@ -64,6 +68,12 @@ var _last_combat_stats: Dictionary = {}
 var _effect_nodes: Array[MeshInstance3D] = []
 var _effect_times: Array[float] = []
 var _effect_cursor: int = 0
+var crouching := false
+var dive_remaining := 0.0
+var dive_cooldown := 0.0
+var _dive_direction := Vector3.ZERO
+var _step_distance := 0.0
+var _reload_phase := 0
 
 
 func setup(owner_game: Node) -> void:
@@ -112,6 +122,8 @@ func _ready() -> void:
 	flashlight.spot_angle = 28.0
 	flashlight.spot_angle_attenuation = 0.8
 	flashlight.shadow_enabled = true
+	flashlight.shadow_bias = 0.15
+	flashlight.shadow_normal_bias = 4.0
 	flashlight.visible = flashlight_on
 	camera.add_child(flashlight)
 	weapon_view = WeaponView.new()
@@ -143,11 +155,11 @@ func _ready() -> void:
 
 
 func _active() -> bool:
-	return is_instance_valid(game) and bool(game.get("running")) and not bool(game.get("paused")) and not _dead
+	return is_instance_valid(game) and bool(game.get("running")) and (not bool(game.get("paused")) or (is_instance_valid(game.get("coop")) and game.coop.is_online())) and not _dead
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not _active():
+	if network_controlled or network_replica or not _active() or bool(game.get("paused")):
 		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var motion: InputEventMouseMotion = event as InputEventMouseMotion
@@ -171,18 +183,25 @@ func _unhandled_input(event: InputEvent) -> void:
 		_aim_toggle = not _aim_toggle
 	if event.is_action_pressed("sprint") and bool(_option("toggle_sprint", false)):
 		_sprint_toggle = not _sprint_toggle
-	for index: int in range(WEAPON_IDS.size()):
+	for index: int in range(4):
 		if event.is_action_pressed("weapon_%d" % (index + 1)):
 			var inventory: Object = _inventory()
 			if inventory != null:
-				var items: Array = inventory.get("items")
-				if index < items.size():
-					equip_weapon(str(items[index].get("uid", "")))
+				var slots: Array = inventory.get("weapon_slots")
+				if index < slots.size() and not String(slots[index]).is_empty():
+					equip_weapon(String(slots[index]))
 			else:
-				equip_weapon(WEAPON_IDS[index])
+				if index < WEAPON_IDS.size(): equip_weapon(WEAPON_IDS[index])
 
 
 func _physics_process(delta: float) -> void:
+	if network_replica: return
+	if network_controlled:
+		rotation.y = float(network_input.get("yaw", rotation.y))
+		_pitch = float(network_input.get("pitch", _pitch))
+		third_person = bool(network_input.get("third_person", false))
+		flashlight_on = bool(network_input.get("flashlight", false))
+		flashlight.visible = flashlight_on
 	if not _active():
 		return
 	time += delta
@@ -193,24 +212,29 @@ func _physics_process(delta: float) -> void:
 	_heat = maxf(0.0, _heat - delta * 2.0)
 	var modifiers: Dictionary = _player_modifiers()
 	max_health = 100.0 * maxf(0.1, float(modifiers.get("max_health", 1.0)))
-	health = minf(max_health, health + maxf(0.0, float(modifiers.get("regen", 0.0))) * delta)
+	if not _network_client(): health = minf(max_health, health + maxf(0.0, float(modifiers.get("regen", 0.0))) * delta)
 	damage_cooldown = maxf(0.0, damage_cooldown - delta)
 	dash_cooldown = maxf(0.0, dash_cooldown - delta)
 	dash_remaining = maxf(0.0, dash_remaining - delta)
-	aiming = (_aim_toggle if bool(_option("toggle_aim", false)) else Input.is_action_pressed("aim")) and not reloading
-	var move_input: Vector2 = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	dive_remaining = maxf(0.0, dive_remaining - delta)
+	dive_cooldown = maxf(0.0, dive_cooldown - delta)
+	set_crouched(_pressed("crouch") or dive_remaining > 0.0)
+	aiming = (_aim_toggle if bool(_option("toggle_aim", false)) else _pressed("aim")) and not reloading
+	var move_input: Vector2 = network_input.get("move", Vector2.ZERO) if network_controlled else (Vector2.ZERO if game.paused else Input.get_vector("move_left", "move_right", "move_forward", "move_back"))
 	var direction: Vector3 = global_transform.basis * Vector3(move_input.x, 0.0, move_input.y)
 	direction.y = 0.0
 	direction = direction.normalized()
-	var sprint_requested: bool = _sprint_toggle if bool(_option("toggle_sprint", false)) else Input.is_action_pressed("sprint")
-	sprinting = (sprint_requested or bool(_option("auto_sprint", false))) and not aiming and direction.length_squared() > 0.1
-	if Input.is_action_just_pressed("sprint") and dash_cooldown <= 0.0 and direction.length_squared() > 0.1 and not aiming:
+	var sprint_requested: bool = _sprint_toggle if bool(_option("toggle_sprint", false)) else _pressed("sprint")
+	sprinting = (sprint_requested or bool(_option("auto_sprint", false))) and not aiming and not crouching and direction.length_squared() > 0.1
+	if _just_pressed("dive"): start_dive(direction)
+	if _just_pressed("sprint") and dash_cooldown <= 0.0 and direction.length_squared() > 0.1 and not aiming and not crouching:
 		dash_remaining = 0.19
 		dash_cooldown = 1.4
 		_dash_direction = direction
 	var speed: float = 8.0 if sprinting else 5.8
 	if aiming:
 		speed = 3.65
+	if crouching: speed = minf(speed, 2.65)
 	var stats: Dictionary = get_weapon_stats()
 	var weapon_mobility: float = clampf(1.0 - (float(stats.get("weight", 0.8)) - 0.8) * 0.22, 0.72, 1.05)
 	speed *= float(modifiers.get("move_speed", 1.0)) * weapon_mobility
@@ -219,24 +243,71 @@ func _physics_process(delta: float) -> void:
 	var target_velocity: Vector3 = direction * speed
 	if dash_remaining > 0.0:
 		target_velocity = _dash_direction * 13.0
+	if dive_remaining > 0:
+		target_velocity = _dive_direction * lerpf(3.0, 11.5, clampf(dive_remaining / 0.7, 0, 1))
 	var acceleration: float = 36.0 if is_on_floor() else 15.0
 	velocity.x = move_toward(velocity.x, target_velocity.x, acceleration * delta)
 	velocity.z = move_toward(velocity.z, target_velocity.z, acceleration * delta)
 	if not is_on_floor():
 		velocity.y -= 18.0 * delta
-	elif Input.is_action_just_pressed("jump"):
+	elif _just_pressed("jump") and not crouching:
 		velocity.y = 6.2 * float(modifiers.get("jump", 1.0))
+		_play_sound("jump")
+	elif dive_remaining > 0.65:
+		velocity.y = 3.2
 	else:
 		velocity.y = -0.15
+	var was_grounded := is_on_floor()
+	var falling_speed := velocity.y
+	var old_position := global_position
 	move_and_slide()
+	if is_on_floor() and not was_grounded and falling_speed < -2.0:
+		_play_sound("land_heavy" if falling_speed < -6 else "land")
+		if dive_remaining > 0: _play_sound("slide")
+	if is_on_floor() and dive_remaining <= 0:
+		_step_distance += Vector2(global_position.x - old_position.x, global_position.z - old_position.z).length()
+		if _step_distance > (2.1 if sprinting else 1.7):
+			_step_distance = 0
+			var region: String = game.world.get_region_id(global_position) if is_instance_valid(game.get("world")) and game.world.has_method("get_region_id") else ""
+			_play_sound("step_soft" if crouching else ("step_grass" if region == "parque" else ("step_interior" if region in ["cinema", "shopping"] else "step_run" if sprinting else "step")))
 	if global_position.y < -24.0:
 		take_damage(max_health * 10.0)
 	_update_view(delta, move_input.length())
 	var fire_mode: String = str(stats.get("fire_mode", "auto"))
-	var trigger: bool = Input.is_action_just_pressed("fire") if fire_mode in ["semi", "burst", "bolt", "pump"] else Input.is_action_pressed("fire")
-	if trigger and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+	var trigger: bool = _just_pressed("fire") if fire_mode in ["semi", "burst", "bolt", "pump"] else _pressed("fire")
+	if trigger and (network_controlled or Input.mouse_mode == Input.MOUSE_MODE_CAPTURED):
 		shoot()
 
+
+func set_crouched(enabled: bool) -> bool:
+	if crouching == enabled: return true
+	var collider := get_node_or_null("BodyCollider") as CollisionShape3D
+	if not is_instance_valid(collider): return false
+	if not enabled:
+		var shape := CapsuleShape3D.new()
+		shape.radius = 0.29
+		shape.height = 1.55
+		var query := PhysicsShapeQueryParameters3D.new()
+		query.shape = shape
+		query.transform = Transform3D(Basis.IDENTITY, global_position + Vector3.UP * 0.795)
+		query.collision_mask = PHYSICAL_WORLD_MASK | 4
+		query.exclude = [get_rid()]
+		if not get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty(): return false
+	crouching = enabled
+	collider.shape.height = 0.90 if enabled else 1.55
+	collider.position.y = collider.shape.height * 0.5
+	return true
+
+func start_dive(direction: Vector3) -> bool:
+	if not _active() or not is_on_floor() or dive_cooldown > 0 or direction.length_squared() < 0.1: return false
+	_dive_direction = Vector3(direction.x, 0, direction.z).normalized()
+	dive_remaining = 0.70
+	dive_cooldown = 1.7
+	dash_remaining = 0
+	velocity.y = 3.2
+	set_crouched(true)
+	_play_sound("dive")
+	return true
 
 func _tick_weapon(delta: float) -> void:
 	for index: int in range(_effect_nodes.size()):
@@ -244,14 +315,24 @@ func _tick_weapon(delta: float) -> void:
 		_effect_nodes[index].visible = _effect_times[index] > 0.0
 	fire_cooldown = maxf(0.0, fire_cooldown - delta)
 	_empty_click_cooldown = maxf(0.0, _empty_click_cooldown - delta)
-	if _burst_remaining > 0 and fire_cooldown <= 0.0 and not reloading:
+	if not _network_client() and _burst_remaining > 0 and fire_cooldown <= 0.0 and not reloading:
 		_burst_firing = true
 		_burst_remaining -= 1
 		shoot()
 		_burst_firing = false
 	if reloading:
 		reload_remaining = maxf(0.0, reload_remaining - delta)
-		if reload_remaining <= 0.0:
+		var progress := 1.0 - reload_remaining / maxf(0.001, reload_duration)
+		if _reload_phase == 0 and progress >= 0.18:
+			_reload_phase = 1
+			_play_sound("mag_out")
+		if _reload_phase == 1 and progress >= 0.74:
+			_reload_phase = 2
+			_play_sound("mag_in")
+		if _reload_phase == 2 and progress >= 0.88 and _reload_was_empty:
+			_reload_phase = 3
+			_play_sound("chamber")
+		if reload_remaining <= 0.0 and not _network_client():
 			var stats: Dictionary = get_weapon_stats()
 			var transfer: int = mini(int(stats["magazine_size"]) - magazine, reserve)
 			magazine += transfer
@@ -282,7 +363,7 @@ func _update_view(delta: float, movement: float) -> void:
 	var grounded_motion: float = movement if is_on_floor() else 0.0
 	_bob_time += delta * (13.5 if sprinting else 9.0) * grounded_motion
 	var bob: float = sin(_bob_time * 2.0) * 0.017 * grounded_motion * float(_option("head_bob", 1.0))
-	view_pivot.position.y = lerpf(view_pivot.position.y, 1.35 + bob, 1.0 - exp(-delta * 14.0))
+	view_pivot.position.y = lerpf(view_pivot.position.y, (0.65 if dive_remaining > 0 else 0.76 if crouching else 1.35) + bob, 1.0 - exp(-delta * 14.0))
 	var stats: Dictionary = get_weapon_stats()
 	var target_fov: float = _target_fov(stats)
 	var handling_speed: float = clampf(float(stats.get("handling", 70.0)) / 70.0, 0.4, 1.5)
@@ -300,6 +381,7 @@ func _update_view(delta: float, movement: float) -> void:
 	if is_instance_valid(weapon_view):
 		weapon_view.call("set_visual_options", float(_option("visual_recoil", 1.0)), float(_option("weapon_effects", 1.0)), bool(_option("reduced_flashes", false)), _inspect_remaining)
 		var reload_progress: float = 1.0 - reload_remaining / maxf(0.01, reload_duration) if reloading else 0.0
+		weapon_view.set("reload_was_empty", _reload_was_empty)
 		weapon_view.call("animate_view", delta, aiming, grounded_motion, sprinting, _bob_time, reload_progress, reloading)
 	if third_person and is_instance_valid(hero):
 		hero.position.y = absf(sin(_bob_time)) * 0.045 * grounded_motion
@@ -308,6 +390,7 @@ func _update_view(delta: float, movement: float) -> void:
 
 
 func shoot() -> bool:
+	if _network_client(): return false
 	if not _active() or reloading or fire_cooldown > 0.0:
 		return false
 	var infinite_ammo: bool = bool(_player_modifiers().get("infinite_ammo", false))
@@ -548,12 +631,14 @@ func _combat_effect(from: Vector3, to: Vector3, color: Color, radius: float) -> 
 
 
 func start_reload() -> bool:
+	if _network_client(): return game.coop.request_action("reload")
 	if not _active():
 		return false
 	var stats: Dictionary = get_weapon_stats()
 	if reloading or reserve <= 0 or magazine >= int(stats["magazine_size"]):
 		return false
 	reloading = true
+	_reload_phase = 0
 	_inspect_remaining = 0.0
 	_burst_remaining = 0
 	_reload_was_empty = magazine == 0
@@ -564,6 +649,7 @@ func start_reload() -> bool:
 
 
 func equip_weapon(id: String) -> bool:
+	if _network_client(): return game.coop.request_action("equip_item", [id])
 	var inventory: Object = _inventory()
 	if inventory != null:
 		_save_ammo()
@@ -709,6 +795,7 @@ func _player_modifiers() -> Dictionary:
 
 
 func _option(key: String, fallback: Variant) -> Variant:
+	if network_controlled and key in ["toggle_aim", "toggle_sprint", "auto_sprint"]: return false
 	if is_instance_valid(game):
 		var settings: Object = game.get("settings") as Object
 		if is_instance_valid(settings):
@@ -725,7 +812,7 @@ func _event_action(event: InputEvent, action: String) -> bool:
 func snapshot() -> Dictionary:
 	_save_ammo()
 	return {"version": 1, "health": health, "max_health": max_health, "position": [position.x, position.y, position.z], "yaw": rotation.y, "pitch": _pitch, "third_person": third_person, "weapon_id": weapon_id, "active_item_uid": active_item_uid, "magazine": magazine, "reserve": reserve, "owned_weapons": owned_weapons.duplicate(true), "upgrade_state": upgrade_state.duplicate(true), "flashlight_on": flashlight_on,
-		"velocity": [velocity.x, velocity.y, velocity.z], "dash_remaining": dash_remaining, "dash_direction": [_dash_direction.x, _dash_direction.y, _dash_direction.z], "time": time,
+		"velocity": [velocity.x, velocity.y, velocity.z], "crouching":crouching, "dive_cooldown":dive_cooldown, "dash_remaining": dash_remaining, "dash_direction": [_dash_direction.x, _dash_direction.y, _dash_direction.z], "time": time,
 		"shot_count": shot_count, "trigger_counts": _trigger_counts.duplicate(), "heat": _heat, "frenzy_remaining": _frenzy_remaining, "haste_remaining": _haste_remaining, "fire_cooldown": fire_cooldown, "damage_cooldown": damage_cooldown, "dash_cooldown": dash_cooldown, "reloading": reloading, "reload_remaining": reload_remaining, "reload_duration": reload_duration, "reload_was_empty": _reload_was_empty, "burst_remaining": _burst_remaining, "aim_toggle": _aim_toggle, "sprint_toggle": _sprint_toggle,
 		# Decimal strings preserve all 64 RNG bits across a JSON save/load round trip.
 		"rng_seed": str(_combat_rng.seed), "rng_state": str(_combat_rng.state), "last_combat": {"damage": float(_last_combat_stats.get("damage", get_weapon_stats()["damage"])), "modifiers": _last_combat_stats.get("modifiers", []).duplicate()}}
@@ -741,6 +828,9 @@ func restore(state: Dictionary) -> bool:
 		if not (value is float or value is int) or not is_finite(float(value)):
 			return false
 	position = Vector3(float(saved_position[0]), float(saved_position[1]), float(saved_position[2]))
+	set_crouched(bool(state.get("crouching", false)))
+	dive_remaining = 0
+	dive_cooldown = clampf(float(state.get("dive_cooldown", 0)), 0, 1.7)
 	var saved_yaw: float = float(state.get("yaw", 0.0))
 	var saved_pitch: float = float(state.get("pitch", 0.0))
 	rotation.y = saved_yaw if is_finite(saved_yaw) else 0.0
@@ -807,6 +897,8 @@ func restore(state: Dictionary) -> bool:
 
 
 func _valid_combat_snapshot(state: Dictionary) -> bool:
+	if state.has("crouching") and not state.crouching is bool: return false
+	if state.has("dive_cooldown") and (not (state.dive_cooldown is int or state.dive_cooldown is float) or not is_finite(float(state.dive_cooldown)) or float(state.dive_cooldown) < 0 or float(state.dive_cooldown) > 1.7): return false
 	if state.has("active_item_uid"):
 		var uid: Variant = state["active_item_uid"]
 		if not uid is String or str(uid).length() > 128:
@@ -906,6 +998,10 @@ func revive_from_companion(amount: float) -> void:
 
 
 func take_damage(amount: float, source: Node3D = null) -> void:
+	if _network_client() or network_replica: return
+	if is_instance_valid(game) and is_instance_valid(game.get("coop")) and game.coop.is_host() and game.coop.current_peer_id != network_peer_id:
+		game.coop.with_peer(network_peer_id, func(): take_damage(amount, source))
+		return
 	if _dead or health <= 0.0 or not is_finite(amount) or amount <= 0.0 or damage_cooldown > 0.0 or dash_remaining > 0.0:
 		return
 	var normal_enemy: bool = is_instance_valid(source) and source.is_in_group("meyui_enemies") and str(source.get("kind")) != "boss" and str(source.get("boss_id")).is_empty()
@@ -1010,3 +1106,14 @@ func _build_hero() -> void:
 		hero.add_child(leg)
 		_hero_part("Paw", Vector3(0.0, -0.22, -0.03), Vector3(0.16, 0.43, 0.23), fur, leg)
 		_hero_legs.append(leg)
+
+func _network_client() -> bool:
+	return is_instance_valid(game) and is_instance_valid(game.get("coop")) and game.coop.is_client()
+
+func _pressed(action: String) -> bool:
+	if not network_controlled and is_instance_valid(game) and game.paused: return false
+	return bool(network_input.get("buttons", {}).get(action, false)) if network_controlled else Input.is_action_pressed(action)
+
+func _just_pressed(action: String) -> bool:
+	if not network_controlled and is_instance_valid(game) and game.paused: return false
+	return bool(network_input.get("pressed", {}).get(action, false)) if network_controlled else Input.is_action_just_pressed(action)

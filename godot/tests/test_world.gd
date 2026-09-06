@@ -40,7 +40,7 @@ func _run() -> void:
 		_check_destination(_world.spawn_points[index], "Enemy spawn %d" % index)
 	for shop: Dictionary in _world.shops:
 		_check_destination(shop["position"], "Shop %s" % shop["id"])
-	_check(_world.regions.size() == 9, "Nine distinct districts exist")
+	_check(_world.regions.size() == 11, "Eleven distinct districts exist")
 	for region: Dictionary in _world.regions:
 		_check(_world.get_region_id(region.center) == region.id, "District centers identify their region: " + region.id)
 		_check_destination(region.center, "District " + region.id)
@@ -48,6 +48,8 @@ func _run() -> void:
 		_check_destination(point.position, "POI " + point.id)
 	for landmark: String in World.Expansion.LANDMARKS:
 		_check_destination(World.Expansion.LANDMARKS[landmark], "Interior " + landmark)
+	for landmark: String in World.Destinations.LANDMARKS:
+		_check_destination(World.Destinations.LANDMARKS[landmark], "Destination " + landmark)
 	for index in range(100):
 		var spawn: Vector3 = _world.get_spawn_near(Vector3(50, 8, -80), 9999)
 		_check(_world.unlocked_regions.has(_world.get_region_id(spawn)), "Spawn fallback stays in an unlocked district")
@@ -115,7 +117,7 @@ func _run() -> void:
 	_check(_world.import_state(initial_state), "Initial region state can be restored")
 	_check(_world.unlocked_regions.size() == 2, "A new run restores precisely two initial districts")
 	_check(_world.import_state(saved), "JSON save state restores opened districts")
-	_check(_world.unlocked_regions.size() == 9, "All nine unlocked districts survive JSON persistence")
+	_check(_world.unlocked_regions.size() == 11, "All eleven unlocked districts survive JSON persistence")
 	_check(not _world.import_state({"unlocked_regions": ["bogus"]}), "Invalid saved region identifiers are rejected")
 	_world.set_event("storm")
 	_check(_world._environment.fog_density > 0.01, "Storm materially changes fog")
@@ -131,15 +133,22 @@ func _run() -> void:
 		_check(not puddle.visible, "Effects zero removes decorative puddles")
 	var glow: Dictionary = _world._emissive_materials[0]
 	_check(float(glow.material.emission_energy_multiplier) < float(glow.energy) * 0.2, "Effects zero reduces decorative glow")
-	_check(is_equal_approx(_world._lights[0].light_energy, 2.0), "Effects zero stops flicker while retaining readable base lighting")
+	_check(is_equal_approx(_world._lights[0].light_energy, 1.44), "Effects zero stops flicker at the authored nighttime light level")
+	var camera := Camera3D.new()
+	_world.add_child(camera)
+	camera.global_position = _world._lights[0].global_position
+	camera.make_current()
 	_world.apply_graphics({"effects":1.0,"shadows":3})
 	_world._process(0.17)
-	_check(_world._puddles[0].visible and is_equal_approx(float(glow.material.emission_energy_multiplier), float(glow.energy)), "Effects one restores puddles and authored glow")
-	_check(not is_equal_approx(_world._lights[0].light_energy, 2.0), "Effects one restores graduated light flicker")
-	_check(_world._moon.shadow_enabled and _world._lights[0].shadow_enabled and not _world._lights[2].shadow_enabled, "Low to high restores only authored shadow casting lights")
+	_check(_world._puddles[0].visible and is_equal_approx(float(glow.material.emission_energy_multiplier), float(glow.energy)*0.75), "Effects one restores puddles and the nighttime emission level")
+	_check(not is_equal_approx(_world._lights[0].light_energy, 1.44), "Effects one restores graduated light flicker")
+	var shadow_count: int = _world._lights.filter(func(light: OmniLight3D) -> bool: return light.shadow_enabled).size()
+	_check(_world._moon.shadow_enabled and _world._lights[0].shadow_enabled and shadow_count <= 4, "High quality enables a bounded set of nearby shadow casting lights")
 	_world.apply_graphics({"effects":0.0,"shadows":0})
 	_check(not _world._moon.shadow_enabled and not _world._lights[0].shadow_enabled, "High to low disables shadows again")
-	_check(bool(_world._moon.get_meta("authored_shadow_enabled")) and bool(_world._lights[0].get_meta("authored_shadow_enabled")), "Authored shadow metadata survives setting changes")
+	_check(_world._lights.all(func(light: OmniLight3D) -> bool: return not light.shadow_enabled), "Low quality disables every local shadow")
+	_world.apply_graphics({"effects":1.0,"shadows":3})
+	_check(_world._lights[0].shadow_enabled, "Returning to high quality restores shadows near the player")
 	await _finish()
 
 func _check_gate_physics(gate: Dictionary, closed: bool) -> void:

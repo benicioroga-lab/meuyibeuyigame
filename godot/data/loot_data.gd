@@ -9,9 +9,9 @@ const RARITIES: Dictionary = {
 	"common":{"name":"Comum", "color":"aebac2", "icon":"•", "rank":0, "power":1.0, "modifiers":0, "parts":0, "weight":54.0},
 	"uncommon":{"name":"Incomum", "color":"77cba2", "icon":"◆", "rank":1, "power":1.06, "modifiers":1, "parts":0, "weight":27.0},
 	"rare":{"name":"Rara", "color":"7fb8f5", "icon":"◆◆", "rank":2, "power":1.14, "modifiers":1, "parts":1, "weight":13.0},
-	"epic":{"name":"Épica", "color":"c58bea", "icon":"✦", "rank":3, "power":1.24, "modifiers":2, "parts":2, "weight":4.9},
-	"legendary":{"name":"Lendária", "color":"efb55a", "icon":"★", "rank":4, "power":1.38, "modifiers":3, "parts":3, "weight":1.0},
-	"mythic":{"name":"Mítica", "color":"f27f9d", "icon":"✺", "rank":5, "power":1.54, "modifiers":4, "parts":4, "weight":0.1}
+	"epic":{"name":"Épica", "color":"c58bea", "icon":"✦", "rank":3, "power":1.24, "modifiers":2, "parts":2, "weight":2.4},
+	"legendary":{"name":"Lendária", "color":"efb55a", "icon":"★", "rank":4, "power":1.38, "modifiers":3, "parts":3, "weight":0.22},
+	"mythic":{"name":"Mítica", "color":"f27f9d", "icon":"✺", "rank":5, "power":1.54, "modifiers":4, "parts":4, "weight":0.012}
 }
 const MANUFACTURERS: Dictionary = {
 	"rajada":{"name":"Rajada", "icon":"»", "color":"8bbcaf", "fire_rate":1.22, "damage":0.9, "recoil":1.12, "description":"Cadência veloz · impacto menor"},
@@ -76,11 +76,11 @@ static func rarity_color(rarity: String) -> Color:
 	return Color(String(RARITIES.get(rarity, RARITIES.common).color))
 
 static func roll_rarity(rng: RandomNumberGenerator, quality: float = 1.0) -> String:
-	var quality_bonus: float = clampf(quality, 0.25, 12.0)
+	var quality_bonus: float = clampf(quality, 0.25, 4.0)
 	var weights: Array[float] = []
 	var total: float = 0.0
 	for rarity: String in RARITY_ORDER:
-		var weight: float = float(RARITIES[rarity].weight) * pow(quality_bonus, float(rarity_rank(rarity)) * 0.65)
+		var weight: float = float(RARITIES[rarity].weight) * pow(quality_bonus, float(rarity_rank(rarity)) * 0.35)
 		weights.append(weight)
 		total += weight
 	var pick: float = rng.randf() * total
@@ -91,11 +91,12 @@ static func roll_rarity(rng: RandomNumberGenerator, quality: float = 1.0) -> Str
 	return "common"
 
 static func roll_weapon(round_number: int, rng: RandomNumberGenerator, quality: float = 1.0, guaranteed_rarity: String = "") -> Dictionary:
+	var rarity: String = guaranteed_rarity if RARITIES.has(guaranteed_rarity) else roll_rarity(rng, quality)
 	var available: Array[String] = []
 	for id: String in Data.WEAPONS:
+		if bool(Data.WEAPONS[id].get("legendary_only",false)) and rarity_rank(rarity) < 4: continue
 		if int(Data.WEAPONS[id].unlock_round) <= maxi(1, round_number):
 			available.append(id)
-	var rarity: String = guaranteed_rarity if RARITIES.has(guaranteed_rarity) else roll_rarity(rng, quality)
 	var model_id: String = available[rng.randi_range(0, available.size() - 1)]
 	return make_weapon(model_id, maxi(1, round_number + rng.randi_range(-1, 1)), rarity, int(rng.randi()))
 
@@ -104,6 +105,8 @@ static func make_weapon(model_id: String, level: int = 1, rarity: String = "comm
 		return {}
 	if not RARITIES.has(rarity):
 		rarity = "common"
+	var unique: bool = bool(Data.WEAPONS[model_id].get("legendary_only",false))
+	if unique and rarity_rank(rarity) < 4: rarity = "legendary"
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.seed = seed_value
 	var manufacturer_ids: Array = MANUFACTURERS.keys()
@@ -117,13 +120,15 @@ static func make_weapon(model_id: String, level: int = 1, rarity: String = "comm
 	var number: int = int(RARITIES[rarity].modifiers)
 	if rarity_rank(rarity) >= 4:
 		var special_keys: Array = LEGENDARY_NAMES.keys()
-		modifiers.append(String(special_keys[rng.randi_range(0, special_keys.size() - 1)]))
+		modifiers.append(String(Data.WEAPONS[model_id].signature) if unique else String(special_keys[rng.randi_range(0, special_keys.size() - 1)]))
+	if unique:
+		modifiers.append({"tidecaller":"third_strike","night_express":"heat","final_frame":"critical_refund"}[model_id])
 	while modifiers.size() < number:
 		var modifier: String = String(choices[rng.randi_range(0, choices.size() - 1)])
 		if not modifiers.has(modifier):
 			modifiers.append(modifier)
 	var element: String = String(Data.WEAPONS[model_id].get("element", "none"))
-	if manufacturer == "aurora" or (rarity_rank(rarity) >= 2 and rng.randf() < 0.35):
+	if not unique and (manufacturer == "aurora" or (rarity_rank(rarity) >= 2 and rng.randf() < 0.35)):
 		element = ELEMENTS[rng.randi_range(1, ELEMENTS.size() - 1)]
 	if manufacturer == "estopim" and rarity_rank(rarity) >= 2 and not modifiers.has("death_blast"):
 		modifiers.append("death_blast")

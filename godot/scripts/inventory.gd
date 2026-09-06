@@ -4,11 +4,19 @@ extends RefCounted
 ## A weapon's ammo and upgrades belong to its instance, not its model.
 const Data = preload("res://data/game_data.gd")
 const Loot = preload("res://data/loot_data.gd")
+const Equipment = preload("res://data/equipment_data.gd")
 const MULTIPLIERS: Array[String] = ["damage", "fire_rate", "magazine_size", "max_reserve", "reload_time", "range", "spread", "recoil"]
 const ADDITIONS: Array[String] = ["critical_chance", "critical_multiplier", "handling"]
 var items: Array[Dictionary] = []
 var attachments: Array[Dictionary] = []
 var equipped_id: String = ""
+var weapon_slots: Array[String] = ["", "", "", ""]
+var active_weapon_slot: int = 0
+var grenade_id: String = "pulse"
+var module_id: String = "balanced"
+var owned_grenades: Array = ["pulse"]
+var owned_modules: Array = ["balanced"]
+var supplies: Dictionary = {"medkit":1, "ammo":1, "grenade":3}
 var capacity: int = 24
 var materials: int = 0
 
@@ -19,6 +27,13 @@ func create_starter() -> void:
 	var starter: Dictionary = Loot.starter_weapon()
 	items.append(starter)
 	equipped_id = String(starter.uid)
+	weapon_slots = [equipped_id, "", "", ""]
+	active_weapon_slot = 0
+	grenade_id = "pulse"
+	module_id = "balanced"
+	owned_grenades = ["pulse"]
+	owned_modules = ["balanced"]
+	supplies = {"medkit":1, "ammo":1, "grenade":3}
 
 func equipped() -> Dictionary:
 	return find_item(equipped_id)
@@ -65,7 +80,7 @@ func stats(item: Dictionary = {}) -> Dictionary:
 	result["rarity_icon"] = String(rarity_data.icon)
 	result["upgrade_level"] = maxi(0, int(item.get("upgrade_level", 0)))
 	result["name"] = String(result.name)
-	if Loot.rarity_rank(rarity) >= 4 and not modifiers.is_empty() and Loot.LEGENDARY_NAMES.has(modifiers[0]):
+	if not bool(Data.WEAPONS[model_id].get("legendary_only",false)) and Loot.rarity_rank(rarity) >= 4 and not modifiers.is_empty() and Loot.LEGENDARY_NAMES.has(modifiers[0]):
 		result["name"] = "%s · %s" % [Loot.LEGENDARY_NAMES[modifiers[0]], result.name]
 	_apply_stats(result, manufacturer)
 	var rolls: Dictionary = item.get("rolls", {})
@@ -146,15 +161,50 @@ func add_item(item: Dictionary) -> bool:
 		if _has_attachment_uid(String(part.uid)):
 			return false
 	items.append(candidate)
+	var vacant := weapon_slots.find("")
+	if vacant >= 0: weapon_slots[vacant] = String(candidate.uid)
 	if equipped_id.is_empty():
 		equipped_id = String(candidate.uid)
+		active_weapon_slot = maxi(0, vacant)
 	return true
 
 func equip(uid: String) -> bool:
 	if find_item(uid).is_empty():
 		return false
+	var slot := weapon_slots.find(uid)
+	if slot < 0:
+		slot = active_weapon_slot
+		weapon_slots[slot] = uid
+	active_weapon_slot = slot
 	equipped_id = uid
 	return true
+
+func assign_slot(uid: String, slot: int) -> bool:
+	if slot < 0 or slot >= 4 or find_item(uid).is_empty(): return false
+	var previous := weapon_slots.find(uid)
+	if previous >= 0: weapon_slots[previous] = weapon_slots[slot]
+	weapon_slots[slot] = uid
+	active_weapon_slot = slot
+	equipped_id = uid
+	return true
+
+func select_slot(slot: int) -> bool:
+	return slot >= 0 and slot < 4 and not weapon_slots[slot].is_empty() and equip(weapon_slots[slot])
+
+func swap_held(incoming: Dictionary) -> Dictionary:
+	# Validate the complete transaction first, including duplicate attachment ownership.
+	# Swapping still works with a full backpack; no pickup is lost on failure.
+	var held := equipped()
+	if held.is_empty() or bool(held.get("favorite", false)): return {}
+	var candidate: RefCounted = get_script().new()
+	if not candidate.import_state(export_state()): return {}
+	var index: int = candidate.items.find(candidate.equipped())
+	candidate.items.remove_at(index)
+	candidate.weapon_slots[candidate.active_weapon_slot] = ""
+	if not candidate.add_item(incoming): return {}
+	candidate.assign_slot(String(incoming.uid), active_weapon_slot)
+	if not import_state(candidate.export_state()): return {}
+	return held
 
 func remove(uid: String, mode: String = "discard") -> Dictionary:
 	if not mode in ["discard", "sell", "dismantle", "drop"]:
@@ -165,6 +215,8 @@ func remove(uid: String, mode: String = "discard") -> Dictionary:
 	if mode == "dismantle":
 		materials += 2 + Loot.rarity_rank(String(item.rarity)) * 2 + int(item.get("upgrade_level", 0))
 	items.erase(item)
+	var slot := weapon_slots.find(uid)
+	if slot >= 0: weapon_slots[slot] = ""
 	return item
 
 func set_flag(uid: String, flag: String, value: bool) -> bool:
@@ -328,11 +380,11 @@ func reroll(uid: String, kind: String, rng: RandomNumberGenerator) -> bool:
 	return true
 
 func export_state() -> Dictionary:
-	return {"version":1, "items":items.duplicate(true), "attachments":attachments.duplicate(true), "equipped_id":equipped_id, "capacity":capacity, "materials":materials}
+	return {"version":2, "items":items.duplicate(true), "attachments":attachments.duplicate(true), "equipped_id":equipped_id, "capacity":capacity, "materials":materials, "weapon_slots":weapon_slots.duplicate(), "active_weapon_slot":active_weapon_slot, "grenade_id":grenade_id, "module_id":module_id, "owned_grenades":owned_grenades.duplicate(), "owned_modules":owned_modules.duplicate(), "supplies":supplies.duplicate()}
 
 func import_state(state: Dictionary) -> bool:
 	# Validate into a temporary inventory, then commit once. Bad saves never half-load.
-	if not _valid_number(state.get("version", 0), 1.0, 1.0) or not state.get("items") is Array or not state.get("attachments") is Array:
+	if not _valid_number(state.get("version", 0), 1.0, 2.0) or not state.get("items") is Array or not state.get("attachments") is Array:
 		return false
 	if not state.get("equipped_id") is String or not _valid_number(state.get("capacity", 24), 1.0, 96.0) or not _valid_number(state.get("materials", 0), 0.0, 2000000000.0):
 		return false
@@ -347,11 +399,43 @@ func import_state(state: Dictionary) -> bool:
 			return false
 	if candidate.items.is_empty() or not candidate.equip(String(state.get("equipped_id", ""))):
 		return false
+	if int(state.version) >= 2:
+		if not state.get("weapon_slots") is Array or state.weapon_slots.size() != 4 or not _valid_number(state.get("active_weapon_slot"), 0, 3): return false
+		var seen: Array = []
+		for uid: Variant in state.weapon_slots:
+			if not uid is String: return false
+			if uid != "" and (candidate.find_item(uid).is_empty() or seen.has(uid)): return false
+			if uid != "": seen.append(uid)
+		if state.weapon_slots[int(state.active_weapon_slot)] != state.equipped_id: return false
+		candidate.weapon_slots.assign(state.weapon_slots)
+		candidate.active_weapon_slot = int(state.active_weapon_slot)
+		for pair: Array in [["owned_grenades", "grenade_id", Equipment.GRENADES], ["owned_modules", "module_id", Equipment.MODULES]]:
+			var owned: Variant = state.get(pair[0])
+			if not owned is Array or owned.is_empty() or owned.size() > pair[2].size(): return false
+			var unique: Array = []
+			for id: Variant in owned:
+				if not id is String or not pair[2].has(id) or unique.has(id): return false
+				unique.append(id)
+			if not state.get(pair[1]) is String or not owned.has(state[pair[1]]): return false
+			candidate.set(pair[0], owned.duplicate())
+			candidate.set(pair[1], state[pair[1]])
+		if not state.get("supplies") is Dictionary or state.supplies.size() != Equipment.SUPPLIES.size(): return false
+		for id: String in Equipment.SUPPLIES:
+			if not _valid_number(state.supplies.get(id), 0, Equipment.SUPPLIES[id].max): return false
+		candidate.supplies = state.supplies.duplicate()
+		for id: String in Equipment.SUPPLIES: candidate.supplies[id] = int(candidate.supplies[id])
 	items = candidate.items
 	attachments = candidate.attachments
 	equipped_id = candidate.equipped_id
 	capacity = candidate.capacity
 	materials = candidate.materials
+	weapon_slots = candidate.weapon_slots
+	active_weapon_slot = candidate.active_weapon_slot
+	grenade_id = candidate.grenade_id
+	module_id = candidate.module_id
+	owned_grenades = candidate.owned_grenades
+	owned_modules = candidate.owned_modules
+	supplies = candidate.supplies
 	return true
 
 func _valid_weapon(item: Dictionary) -> bool:

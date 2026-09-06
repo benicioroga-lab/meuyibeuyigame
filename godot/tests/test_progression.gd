@@ -37,6 +37,13 @@ func _run() -> void:
 	for row: Dictionary in rows:
 		_check(row.has("value") and row.has("next_value") and row.has("cost") and row.has("icon"), "Upgrade row carries comparison and shared icon: " + row.id)
 	var restored = Progression.new()
+	for id: String in Progression.DistrictPerks.PERKS:
+		_check(not Progression.PERKS.has(id) and not progression.increment(id), "District perks are unavailable through menu talent purchases: " + id)
+		var stat: String = Progression.DistrictPerks.PERKS[id].stat
+		var prior: float = progression.modifiers()[stat]
+		var cost: int = progression.station_cost(id)
+		_check(progression.increment_station(id) and progression.modifiers()[stat] > prior, "Physical station changes its advertised stat: " + id)
+		_check(progression.station_cost(id) > cost, "Next station rank increases its price: " + id)
 	restored.import_state(JSON.parse_string(JSON.stringify(progression.export_state())))
 	_check(restored.modifiers() == progression.modifiers(), "All branch ranks round trip through JSON")
 	var exported: Dictionary = restored.export_state()

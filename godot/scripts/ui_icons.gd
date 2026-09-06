@@ -14,6 +14,12 @@ static func texture(id: String, tint: Color = PAPER, size: int = 24) -> Texture2
 	var key := "%s:%s:%d" % [id, tint.to_html(), size]
 	if _cache.has(key): return _cache[key]
 	var paths: Dictionary = {
+		"ammo": '<path d="M4 9l3-6 3 6v12H4zM14 9l3-6 3 6v12h-6zM4 16h6m4 0h6"/>',
+		"blast": '<path d="m10 3 4 1v4m0-4 5 2v4M8 8h8l3 7-3 6H8l-3-6zM8 12h8m-7 4h6"/>',
+		"cryo": '<path d="M12 2v20M3 7l18 10M3 17 21 7M9 4l3 3 3-3M9 20l3-3 3 3M3 10l4-1V5m14 9-4 1v4"/>',
+		"shock": '<path d="m14 2-9 12h6l-1 8L21 9h-7zM3 4l2 2m15 12 2 2"/>',
+		"fire": '<path d="M12 2c1 6-5 7-3 11 3-1 4-4 4-5 7 6 7 14-1 14S1 15 6 8c-1 6 3 4 6-6z"/>',
+		"target": '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="M12 1v4m0 14v4M1 12h4m14 0h4"/>',
 		"weapon": '<path d="M3 9h14l4 2v3H9l-2 6H4l1-7H3zM16 9V7h3M9 14v3h4v-3"/>',
 		"bag": '<path d="M5 7h14l1 14H4zM8 7V5a4 4 0 0 1 8 0v2M4 13h16M9 13v3h6v-3"/>',
 		"paw": '<path d="M7 17c0-3 2-6 5-6s5 3 5 6c0 3-3 2-5 2s-5 1-5-2z"/><ellipse cx="5" cy="10" rx="2" ry="3"/><ellipse cx="10" cy="5" rx="2" ry="3"/><ellipse cx="16" cy="5" rx="2" ry="3"/><ellipse cx="20" cy="11" rx="2" ry="3"/>',

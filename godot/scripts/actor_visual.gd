@@ -5,6 +5,7 @@ extends RefCounted
 
 
 static func build_enemy(parent: Node3D, kind: String) -> Dictionary:
+	if kind != "boss": return build_creature(parent, kind)
 	var materials: Array[StandardMaterial3D] = []
 	var default_colors: Array[Color] = []
 	var coat_color: Color = Color("bc524d")
@@ -201,6 +202,88 @@ static func build_enemy(parent: Node3D, kind: String) -> Dictionary:
 		"left_leg": legs[0], "right_leg": legs[1],
 		"materials": materials, "default_colors": default_colors,
 	}
+
+static func build_creature(parent: Node3D, kind: String) -> Dictionary:
+	var materials: Array[StandardMaterial3D] = []
+	var colors: Array[Color] = []
+	var crawler := kind in ["runner", "hunter", "parasite", "exploder"]
+	var floating := kind in ["screamer", "summoner", "stealth"]
+	var shell_color := Color("343d49")
+	var eye_color := Color("ff553f")
+	if kind in ["spitter", "exploder"]:
+		shell_color = Color("394638")
+		eye_color = Color("bbf27a")
+	elif floating:
+		shell_color = Color("3b334b")
+		eye_color = Color("bd8eff")
+	elif kind in ["runner", "hunter"]:
+		shell_color = Color("3e4144")
+		eye_color = Color("ffc470")
+	var shell := _material(shell_color.lightened(randf_range(0.0, 0.06)), materials, colors)
+	shell.metallic = 0.24
+	shell.roughness = 0.7
+	var flesh := _material(Color("544554"), materials, colors)
+	var bone := _material(Color("8e9289"), materials, colors)
+	var dark := _material(Color("11171f"), materials, colors)
+	# Eyes stay readable with shadows/effects disabled; depth test prevents wall silhouettes.
+	var eyes := _material(eye_color, materials, colors)
+	eyes.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	eyes.emission_enabled = true
+	eyes.emission = eye_color
+	eyes.emission_energy_multiplier = 3.0
+	var root := _pivot(parent, "Creature_" + kind, Vector3.ZERO)
+	var body := _pivot(root, "Carapace", Vector3.ZERO)
+	var head_at := Vector3(0, 0.85, -0.32) if crawler else Vector3(0, 1.55, 0)
+	var torso_at := Vector3(0, 0.68, 0.02) if crawler else Vector3(0, 1.03, 0)
+	var head := _pivot(body, "SensoryCrown", head_at)
+	_sphere(body, flesh, torso_at, Vector3(0.28, 0.25 if crawler else 0.34, 0.40 if crawler else 0.21))
+	_sphere(head, shell, Vector3.ZERO, Vector3(0.225, 0.225, 0.20))
+	_box(head, dark, Vector3(0, -0.04, -0.18), Vector3(0.32, 0.18, 0.04))
+	for side: float in [-1.0, 1.0]:
+		_sphere(head, eyes, Vector3(side * 0.08, 0.055, -0.198), Vector3(0.047, 0.025, 0.025))
+		var fang := _cylinder(head, bone, Vector3(side * 0.10, -0.15, -0.17), 0.034, 0.003, 0.15)
+		fang.rotation.x = -0.32
+		var ridge := _box(head, shell, Vector3(side * 0.15, 0.145, -0.13), Vector3(0.16, 0.07, 0.19))
+		ridge.rotation.z = side * 0.25
+	for row: int in range(4):
+		var at := torso_at + Vector3(0, 0.10 - row * 0.12, 0)
+		if crawler: at = torso_at + Vector3(0, 0.15, -0.22 + row * 0.16)
+		var plate := _sphere(body, shell, at, Vector3(0.31 - row * 0.012, 0.085, 0.25 if not crawler else 0.15))
+		plate.rotation.z = randf_range(-0.055, 0.055)
+	var legs: Array[Node3D] = []
+	var arms: Array[Node3D] = []
+	for side: float in [-1.0, 1.0]:
+		var leg := _pivot(body, "HindLimb", Vector3(side * 0.19, 0.64, 0.24 if crawler else 0.04))
+		_capsule(leg, shell, Vector3(side * 0.035, -0.19, 0.035), 0.075, 0.38)
+		_capsule(leg, bone, Vector3(side * 0.055, -0.45, -0.03), 0.036, 0.24)
+		_box(leg, dark, Vector3(side * 0.04, -0.60, -0.10), Vector3(0.11, 0.075, 0.22))
+		legs.append(leg)
+		var arm := _pivot(body, "ForeLimb", Vector3(side * 0.28, 0.62 if crawler else 1.23, -0.22 if crawler else 0))
+		_capsule(arm, flesh, Vector3(side * 0.08, -0.17, 0), 0.07, 0.36)
+		var blade := _cylinder(arm, bone, Vector3(side * 0.11, -0.44, -0.075), 0.075, 0.003, 0.37)
+		blade.rotation.x = -0.38
+		arms.append(arm)
+	if kind in ["tank", "armored"]:
+		for side: float in [-1.0, 1.0]:
+			_sphere(body, shell, Vector3(side * 0.30, 1.22, 0), Vector3(0.21, 0.21, 0.25))
+			_cylinder(body, bone, Vector3(side * 0.31, 1.46, 0), 0.0, 0.075, 0.25)
+		if kind == "armored": _box(body, shell, Vector3(0, 1.01, -0.24), Vector3(0.56, 0.63, 0.12))
+	if kind in ["exploder", "spitter"]:
+		for side: float in [-1.0, 1.0]:
+			_sphere(body, flesh, torso_at + Vector3(side * 0.18, 0.22, 0.16), Vector3(0.20, 0.23, 0.23))
+			_sphere(body, eyes, torso_at + Vector3(side * 0.25, 0.31, 0.17), Vector3(0.035, 0.04, 0.04))
+	if kind == "parasite":
+		for side: float in [-1.0, 1.0]:
+			var limb := _pivot(body, "MiddleLimb", Vector3(side * 0.24, 0.54, 0.02))
+			var talon := _capsule(limb, bone, Vector3(side * 0.10, -0.24, 0), 0.04, 0.51)
+			talon.rotation.z = side * 0.45
+			legs.append(limb)
+	if floating:
+		for index: int in range(5):
+			var fin := _box(body, shell, Vector3(sin(index * TAU / 5) * 0.27, 0.72, cos(index * TAU / 5) * 0.2), Vector3(0.085, 0.7, 0.12))
+			fin.rotation.z = sin(index * TAU / 5) * 0.35
+		_sphere(body, eyes, Vector3(0, 1.04, -0.225), Vector3(0.065, 0.065, 0.025))
+	return {"root":root, "body":body, "head":head, "left_arm":arms[0], "right_arm":arms[1], "left_leg":legs[0], "right_leg":legs[1], "limbs":legs + arms, "materials":materials, "default_colors":colors, "morphology":"crawler" if crawler else ("wraith" if floating else "carapace"), "head_at":head_at, "body_at":torso_at, "body_size":Vector3(0.65, 0.53, 0.9) if crawler else Vector3(0.7, 0.66, 0.5), "collision_height":1.15 if crawler else 1.75}
 
 
 static func build_dog(parent: Node3D) -> Dictionary:

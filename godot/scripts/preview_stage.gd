@@ -132,88 +132,34 @@ func show_weapon(item: Dictionary, stats: Dictionary) -> void:
 	if not is_node_ready():
 		call_deferred("show_weapon", item, stats)
 		return
-	if not _clear_model("weapon:" + JSON.stringify([item, stats])):
-		return
+	if not _clear_model("weapon:" + JSON.stringify([item, stats])): return
 	_kind = "weapon"
-	camera.size = 2.0
-	var family: String = str(stats.get("family", "pistol"))
-	var tone: Color = Color("819396")
-	var raw_color: Variant = stats.get("color", MINT)
-	if raw_color is Color:
-		tone = raw_color
-	elif raw_color is String:
-		tone = Color.from_string(raw_color, MINT)
-	var metal: Color = Color("35414b")
-	var ivory: Color = Color("d2cbb9")
-	var long_gun: bool = family not in ["pistol", "revolver", "smg", "improvised"]
-	var body_length: float = 0.74 if long_gun else 0.52
-	_box("Receiver", Vector3(-0.04, 0.04, 0.0), Vector3(body_length, 0.19, 0.17), metal)
-	_box("SidePlate", Vector3(-0.05, 0.045, 0.091), Vector3(body_length * 0.65, 0.11, 0.025), tone)
-	_box("Grip", Vector3(-0.15, -0.20, 0.0), Vector3(0.13, 0.34, 0.15), Color("20282e")).rotation.z = -0.18
-	_box("TriggerGuard", Vector3(0.02, -0.10, 0.0), Vector3(0.23, 0.055, 0.10), ivory)
-	var barrel_length: float = 0.68 if long_gun else 0.34
-	if family == "sniper":
-		barrel_length = 0.94
-	elif family == "shotgun":
-		barrel_length = 0.82
-	_cylinder("Barrel", Vector3(body_length * 0.45 + barrel_length * 0.5, 0.045, 0.0), 0.047, barrel_length, metal)
-	_cylinder("MuzzleRing", Vector3(body_length * 0.45 + barrel_length, 0.045, 0.0), 0.057, 0.045, ivory)
-	if long_gun:
-		_box("Stock", Vector3(-0.62, -0.015, 0.0), Vector3(0.46, 0.22, 0.13), tone)
-		_box("ButtPad", Vector3(-0.87, -0.025, 0.0), Vector3(0.07, 0.27, 0.16), metal)
-		_box("Rail", Vector3(0.02, 0.17, 0.0), Vector3(0.70, 0.035, 0.11), ivory)
-	var magazine_size: Vector3 = Vector3(0.14, 0.28, 0.13)
-	if family == "lmg":
-		magazine_size = Vector3(0.31, 0.32, 0.24)
-	elif family == "smg":
-		magazine_size.y = 0.40
-	_box("Magazine", Vector3(0.15, -0.20, 0.0), magazine_size, metal).rotation.z = 0.13
-	match family:
-		"revolver":
-			_cylinder("RevolverChamber", Vector3(0.06, 0.04, 0.0), 0.14, 0.22, tone)
-		"shotgun":
-			_cylinder("ShellTube", Vector3(0.62, -0.05, 0.0), 0.045, 0.73, metal)
-			_box("PumpGrip", Vector3(0.53, -0.06, 0.0), Vector3(0.29, 0.14, 0.19), tone)
-		"sniper":
-			_cylinder("LongScope", Vector3(-0.03, 0.28, 0.0), 0.08, 0.54, metal)
-			_cylinder("ScopeLens", Vector3(0.25, 0.28, 0.0), 0.070, 0.022, MINT, true)
-		"lmg":
-			_box("CarryHandle", Vector3(-0.08, 0.31, 0.0), Vector3(0.32, 0.045, 0.08), ivory)
-			_box("HandleStem", Vector3(-0.24, 0.24, 0.0), Vector3(0.035, 0.15, 0.08), metal)
-		"improvised":
-			_box("RepairTape", Vector3(0.04, 0.04, 0.0), Vector3(0.12, 0.22, 0.19), AMBER)
-			_box("Brace", Vector3(-0.22, 0.07, 0.10), Vector3(0.35, 0.045, 0.03), ivory).rotation.z = 0.22
-		"experimental":
-			for coil: int in range(5):
-				_cylinder("InductionCoil%d" % coil, Vector3(0.36 + coil * 0.11, 0.045, 0.0), 0.083, 0.038, MINT, true)
-		"special", "launcher":
-			_cylinder("LaunchTube", Vector3(0.40, 0.06, 0.0), 0.17, 1.04, tone)
-			_cylinder("LaunchMouth", Vector3(0.94, 0.06, 0.0), 0.19, 0.08, metal)
-			_box("DangerStripe", Vector3(0.40, 0.06, 0.17), Vector3(0.38, 0.12, 0.025), AMBER)
-	var installed: Dictionary = item.get("attachments", {}) if item.get("attachments", {}) is Dictionary else {}
-	for slot: String in installed:
-		if str(installed[slot]).is_empty():
-			continue
-		match slot:
-			"scope", "sight":
-				_box("Installed_scope", Vector3(0.03, 0.26, 0.0), Vector3(0.25, 0.17, 0.14), tone)
-				_box("ScopeGlass", Vector3(0.166, 0.28, 0.0), Vector3(0.015, 0.10, 0.10), MINT, true)
-			"barrel":
-				_cylinder("Installed_barrel", Vector3(body_length * 0.45 + barrel_length + 0.1, 0.045, 0.0), 0.078, 0.25, tone)
-			"magazine":
-				_cylinder("Installed_magazine", Vector3(0.16, -0.27, 0.0), 0.19, 0.21, tone)
-			"stock":
-				_box("Installed_stock", Vector3(-0.79 if long_gun else -0.41, -0.01, 0.0), Vector3(0.30, 0.24, 0.20), ivory)
-			"underbarrel":
-				_box("Installed_underbarrel", Vector3(0.44, -0.17, 0.0), Vector3(0.13, 0.28, 0.14), tone)
-			"ammo":
-				for shell: int in range(3):
-					_box("Installed_ammo%d" % shell, Vector3(-0.20 + shell * 0.09, 0.04, 0.12), Vector3(0.040, 0.12, 0.035), AMBER, true)
-			"receiver", "internal":
-				_box("Installed_receiver", Vector3(-0.08, 0.05, 0.12), Vector3(0.19, 0.08, 0.028), MINT, true)
-	_model.position.x = -0.12
-	_model.rotation.y = -0.20
+	camera.size = 1.35
+	var rig := preload("res://scripts/weapon_view.gd").new()
+	_model.add_child(rig)
+	rig.set_weapon(String(item.get("model_id", "biscuit")), stats)
+	# Inspect the exact weapon used in combat, without first-person hands or flash.
+	for part: Node in rig.model.get_children():
+		if String(part.name) in ["TriggerPaw", "SupportPaw", "TealSleeve", "Muzzle"]:
+			part.hide()
+	rig.position = Vector3(-0.38, 0.08, 0)
+	rig.rotation.y = -PI * 0.5
+	rig.scale = Vector3.ONE * 1.6
+	_model.rotation.y = -0.15
 
+func show_character(source: Node3D) -> void:
+	if not is_node_ready():
+		call_deferred("show_character", source)
+		return
+	if not is_instance_valid(source) or not _clear_model("character"): return
+	_kind = "character"
+	camera.size = 1.9
+	var character := source.duplicate() as Node3D
+	_model.add_child(character)
+	character.visible = true
+	character.position = Vector3.ZERO
+	_model.position.y = -0.59
+	_model.rotation.y = 2.5
 
 func show_dog(progression: Dictionary) -> void:
 	if not is_node_ready():
@@ -233,6 +179,14 @@ func show_dog(progression: Dictionary) -> void:
 		var old_model: Node3D = _model
 		_model = body
 		_box("ProgressionHarness", Vector3(0.0, 0.47, 0.07), Vector3(0.28, 0.06, 0.38), gear)
+		var levels: Dictionary = progression.get("levels", {})
+		if int(levels.get("elemental", 0)) > 0:
+			var element_color: Color = {"fire":Color("ef9c68"), "shock":Color("be9ff0"), "cryo":Color("8addf0")}.get(progression.get("element", "shock"), MINT)
+			for side: float in [-1.0, 1.0]: _box("ElementCell", Vector3(side * 0.15, 0.51, -0.20), Vector3(0.07, 0.1, 0.13), element_color, true)
+		if int(levels.get("resupply", 0)) > 0:
+			for index: int in range(3): _box("AmmoCanister", Vector3(0.18, 0.4, -0.03 + index * 0.09), Vector3(0.07, 0.13, 0.055), AMBER)
+		if int(levels.get("survival", 0)) > 0: _box("BackArmor", Vector3(0,0.49,0.04), Vector3(0.25,0.11,0.53), Color("39434c"))
+		if int(levels.get("control", 0)) > 0: _box("HunterHarness", Vector3(0,0.38,-0.35), Vector3(0.32,0.15,0.09), Color("707f8b"))
 		if archetype in ["collector", "support"]:
 			for side: int in [-1, 1]:
 				_box("SaddleBag%d" % side, Vector3(side * 0.19, 0.30, 0.13), Vector3(0.12, 0.23, 0.28), gear)
@@ -256,8 +210,7 @@ func _material(color: Color, metallic: float = 0.25, glow: bool = false) -> Stan
 
 
 func _box(part_name: String, at: Vector3, dimensions: Vector3, color: Color, glow: bool = false) -> MeshInstance3D:
-	var shape: BoxMesh = BoxMesh.new()
-	shape.size = dimensions
+	var shape: ArrayMesh = preload("res://scripts/weapon_geometry.gd").chamfer_box(dimensions)
 	return _part(part_name, shape, at, color, glow)
 
 
@@ -272,7 +225,7 @@ func _cylinder(part_name: String, at: Vector3, radius: float, length: float, col
 	return node
 
 
-func _part(part_name: String, mesh: PrimitiveMesh, at: Vector3, color: Color, glow: bool) -> MeshInstance3D:
+func _part(part_name: String, mesh: Mesh, at: Vector3, color: Color, glow: bool) -> MeshInstance3D:
 	var node: MeshInstance3D = MeshInstance3D.new()
 	node.name = part_name
 	node.mesh = mesh

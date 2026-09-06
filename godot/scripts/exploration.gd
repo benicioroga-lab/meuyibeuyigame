@@ -3,6 +3,7 @@ extends Node3D
 
 const Loot = preload("res://data/loot_data.gd")
 const Drop = preload("res://scripts/loot_drop.gd")
+const DistrictPerks = preload("res://data/district_perks.gd")
 const MAX_DROPS := 96
 const MAX_PENDING_REWARDS := 512
 const SOLID_WORLD_MASK := 1
@@ -21,13 +22,18 @@ var pending_drops: Array[Dictionary] = []
 var _next_pickup_sound := 0
 var _next_storage_notice := 0
 var _highlighted_drop: Node3D
+var _challenge_clock := 0.0
+var _pressure_clock := 0.0
 
 func setup(owner_game: Node) -> void:
 	game = owner_game
 	process_mode = Node.PROCESS_MODE_PAUSABLE
 
 func _process(delta: float) -> void:
-	if not game.running or game.paused: return
+	if is_instance_valid(game.get("coop")) and game.coop.is_client():
+		if game.running: _scan()
+		return
+	if not game.running or (game.simulation_paused() if game.has_method("simulation_paused") else game.paused): return
 	_clock -= delta
 	if _clock <= 0:
 		_clock = 0.13
@@ -40,6 +46,8 @@ func _process(delta: float) -> void:
 			game.ui.announce("NOVA ÁREA", game.world.district(game.player.global_position))
 			game.audio.play("discovery")
 			game.schedule_save()
+	if not challenge.is_empty():
+		_tick_challenge(delta)
 	if not challenge.is_empty():
 		challenge["remaining"] = maxf(0, float(challenge["remaining"]) - delta)
 		if float(challenge["remaining"]) <= 0:
@@ -121,6 +129,8 @@ func _create_drop(kind: String, payload: Dictionary, at: Vector3, quiet: bool = 
 	if kind == "weapon" and _rarity(payload) >= 4:
 		game.ui.announce("ARMA " + str(Loot.RARITIES[payload["rarity"]]["name"]).to_upper(), game.inventory.stats(payload).get("name", ""))
 		game.audio.play("loot_" + str(payload["rarity"]))
+	elif kind == "weapon":
+		game.audio.play("weapon_drop")
 	elif kind == "powerup":
 		game.audio.play("loot_rare")
 	return drop
@@ -213,7 +223,7 @@ func _scan() -> void:
 		if (alignment < best_alignment - 0.001 or (absf(alignment - best_alignment) <= 0.001 and distance < best)) and _visible(point):
 			best = distance
 			best_alignment = alignment
-			target = {"kind":"drop", "node":drop, "type":drop.kind, "name":_drop_name(drop), "distance":distance, "range":3.4, "prompt":"E  RECOLHER"}
+			target = {"kind":"drop", "node":drop, "type":drop.kind, "name":_drop_name(drop), "distance":distance, "range":3.4, "prompt":"E  RECOLHER    F  TROCAR" if drop.kind == "weapon" else "E  RECOLHER"}
 	if not target.is_empty():
 		_set_highlight(target.get("node"))
 		return
@@ -230,6 +240,11 @@ func _scan() -> void:
 			best_alignment = alignment
 			var terms := _door_terms(poi) if type == "door" else {"cost":maxi(0, int(poi.get("cost", 0))),"round":1}
 			target = {"kind":"poi", "poi":poi, "type":type, "name":poi.get("name", ""), "cost":terms.cost, "prompt":"E  INTERAGIR" + (" · ROUND %d" % int(terms.round) if game.round_number < int(terms.round) else "")}
+			if type == "perk_station":
+				var perk_id: String = poi.perk_id
+				target.cost = game.progression.station_cost(perk_id)
+				target.prompt = "E  COMPRAR AQUI"
+				target.description = DistrictPerks.preview(perk_id,int(game.progression.station_levels.get(perk_id,0)))
 	_set_highlight(target.get("node") if target.get("kind") == "drop" else null)
 
 func _set_highlight(drop: Node3D) -> void:
@@ -268,7 +283,7 @@ func _available(poi: Dictionary) -> bool:
 	if type in ["chest", "cache"]:
 		return game.round_number >= int(used_pois.get(str(poi["id"]), -5)) + 5
 	if type == "boss": return not bosses_defeated.has(str(poi["id"])) and game.boss_zone.is_empty()
-	if type == "challenge": return challenge.is_empty()
+	if type == "challenge": return challenge.is_empty() and game.round_number >= int(used_pois.get(str(poi.id),-4))+4
 	return true
 
 func get_context() -> Dictionary:
@@ -345,6 +360,29 @@ func _attachment_modifiers(item: Dictionary, config: Dictionary) -> Dictionary:
 		if config.has(key): result[key] = config[key]
 	return result
 
+func swap_ground_weapon() -> bool:
+	_scan()
+	if target.get("kind") != "drop" or target.get("type") != "weapon": return false
+	var drop: Node3D = target.node
+	game.player._save_ammo()
+	var old: Dictionary = game.inventory.swap_held(drop.payload)
+	if old.is_empty():
+		game.notify("Arma favorita protegida · desmarque a estrela para trocar")
+		return false
+	# Reuse the selected floor slot: even 96 occupied drop slots cannot lose the old gun.
+	var at: Vector3 = drop.global_position
+	drops.erase(drop)
+	drop.collected = true
+	drop.queue_free()
+	_create_drop("weapon", old, at - Vector3.UP * 0.07, true, false)
+	game.player.sync_inventory()
+	game.record_weapon(game.inventory.equipped())
+	game.audio.play("weapon_drop")
+	game.notify("Arma trocada · anterior deixada no chão")
+	game.schedule_save()
+	target = {}
+	return true
+
 func interact() -> void:
 	_scan()
 	if target.is_empty(): return
@@ -368,11 +406,19 @@ func interact() -> void:
 			return
 		if game.world.unlock_region(str(poi.get("region_id", ""))):
 			game.coins -= cost
-			game.audio.play("purchase")
+			game.audio.play("door_unlock")
 			game.ui.announce("CAMINHO ABERTO", poi.get("name", ""))
 			game.schedule_save()
 	elif type in ["forge", "merchant", "food"]:
 		game.open_inventory("forge")
+	elif type == "perk_station":
+		var id: String = poi.perk_id
+		# interact() rescans distance, line of sight and unlocked region before spending.
+		if not DistrictPerks.PERKS.has(id) or not game.spend(game.progression.station_cost(id)): return
+		game.progression.increment_station(id)
+		game.audio.play("purchase")
+		game.ui.announce("PERK DA REGIÃO",poi.name + " · nível " + str(game.progression.station_levels[id]))
+		game.schedule_save()
 	elif type in ["chest", "cache"]:
 		if not game.spend(cost): return
 		used_pois[str(poi["id"])] = game.round_number
@@ -390,7 +436,12 @@ func interact() -> void:
 		var duration := float(poi.get("duration", 90))
 		var goal := int(poi.get("target", 12))
 		challenge = {"id":str(poi["id"]), "name":title, "region":str(poi.get("region_id", "patio")), "remaining":duration, "kills":0, "target":goal}
-		game.ui.announce(title, "%d eliminações nesta região · %d segundos" % [goal, int(duration)])
+		challenge["mode"] = poi.get("mode","kills")
+		challenge["pressure"] = poi.get("pressure",false)
+		challenge["position"] = [poi.position.x,poi.position.y,poi.position.z]
+		_challenge_clock = 0
+		_pressure_clock = 0
+		game.ui.announce(title, "%ds de controle · defenda o painel" % goal if challenge.mode == "hold" else "%d eliminações nesta região · %d segundos" % [goal, int(duration)])
 		game.schedule_save()
 	_scan()
 
@@ -449,16 +500,44 @@ func _drop_name(drop: Node3D) -> String:
 
 func on_kill(enemy: Node3D) -> void:
 	if challenge.is_empty(): return
+	if challenge.get("mode","kills") == "hold": return
 	if game.world.get_region_id(enemy.global_position) != str(challenge.get("region", "")): return
 	challenge["kills"] = int(challenge["kills"]) + 1
 	if int(challenge["kills"]) >= int(challenge["target"]):
-		var reward: int = 300 + game.round_number * 25
-		game.add_coins(reward, "challenge")
-		drop_item("weapon", Loot.roll_weapon(game.round_number + 2, game.rng, game.loot_quality(), "epic"), enemy.global_position)
-		game.award_profile("challenge", 1)
-		game.ui.announce("DESAFIO COMPLETO", "Equipamento épico · +%d petiscos" % reward)
-		challenge.clear()
-		game.schedule_save()
+		_finish_challenge(enemy.global_position)
+
+func _tick_challenge(delta: float) -> void:
+	if not bool(challenge.get("pressure",false)): return
+	var participants: Array = game.coop.combat_targets() if is_instance_valid(game.get("coop")) and game.coop.is_online() else [game.player]
+	_pressure_clock -= delta
+	if _pressure_clock <= 0 and game.enemies.size() < 22:
+		_pressure_clock = 3.2
+		var region: String = challenge.region
+		var points: Array[Vector3] = []
+		for point: Vector3 in game.world.spawn_points:
+			if game.world.get_region_id(point) == region and participants.all(func(actor: Node3D) -> bool: return not is_instance_valid(actor) or point.distance_to(actor.global_position) > 5): points.append(point)
+		if not points.is_empty():
+			game._spawn_enemy_data({"kind":"runner" if game.rng.randf() < 0.5 else "armored","elite":game.rng.randf()<0.2,"position":points[game.rng.randi_range(0,points.size()-1)],"wave_enemy":false})
+	if challenge.get("mode","kills") == "hold":
+		var point: Array = challenge.position
+		var at := Vector3(point[0],point[1],point[2])
+		var clear: bool = participants.any(func(actor: Node3D) -> bool: return is_instance_valid(actor) and actor.global_position.distance_to(at) < 7) and not game.enemies.any(func(enemy: Node3D) -> bool: return is_instance_valid(enemy) and not enemy.dead and enemy.global_position.distance_to(at) < 3)
+		if clear:
+			_challenge_clock += delta
+			if _challenge_clock >= 1:
+				_challenge_clock -= 1
+				challenge.kills = int(challenge.kills)+1
+		if int(challenge.kills) >= int(challenge.target): _finish_challenge(at)
+
+func _finish_challenge(at: Vector3) -> void:
+	var reward: int = 300 + game.round_number * 25
+	game.add_coins(reward,"challenge")
+	used_pois[str(challenge.id)] = game.round_number
+	drop_item("weapon",Loot.roll_weapon(game.round_number+2,game.rng,game.loot_quality(),"epic"),at,true)
+	game.award_profile("challenge_"+str(challenge.id),1)
+	game.ui.announce("DESAFIO COMPLETO","Equipamento épico · +%d petiscos" % reward)
+	challenge.clear()
+	game.schedule_save()
 
 func export_state() -> Dictionary:
 	var loot: Array = []

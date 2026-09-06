@@ -1,5 +1,8 @@
 extends Node3D
 class_name MeyuiWeaponView
+const Geometry = preload("res://scripts/weapon_geometry.gd")
+var support_hand: MeshInstance3D
+var reload_was_empty := false
 
 ## A bounded, reusable first-person rig: no particles or nodes are allocated per shot.
 var weapon_id: String = "biscuit"
@@ -36,13 +39,76 @@ func _material(color: Color, metallic: float = 0.0, emission: bool = false) -> S
 		mat.emission_energy_multiplier = 2.0
 	return mat
 
+func _signature_shell(id: String) -> void:
+	for piece: String in ["Receiver","ColoredUpper","Stock","LongForestock"]:
+		if model.has_node(piece): model.get_node(piece).hide()
+	var color: Color = {"tidecaller":Color("417f8b"),"night_express":Color("a68449"),"final_frame":Color("665d8b")}[id]
+	_shell("SculptedReceiver",Vector3(0,0.015,-0.23),Vector3(0.115,0.115,0.29),color)
+	_shell("ErgonomicStock",Vector3(0,-0.035,0.15),Vector3(0.075,0.13,0.22),Color("27343e"))
+	if id == "tidecaller":
+		for side: float in [-1,1]:
+			_shell("InductorFork",Vector3(side*0.10,0.03,-0.55),Vector3(0.035,0.06,0.22),Color("516978"))
+		for i: int in range(3): _energy_ring(Vector3(0,0.03,-0.4-i*0.095),0.092,Color("7acfe3"))
+		_shell("PressureCell",Vector3(0,-0.11,-0.22),Vector3(0.10,0.13,0.12),Color("81abb3"))
+	elif id == "night_express":
+		_shell("StreamlinedShroud",Vector3(0,0.02,-0.47),Vector3(0.085,0.078,0.18),color)
+		var drum := CylinderMesh.new()
+		drum.top_radius = 0.13
+		drum.bottom_radius = 0.13
+		drum.height = 0.18
+		drum.radial_segments = 24
+		magazine_mesh.mesh = drum
+		magazine_mesh.rotation.z = PI/2
+		magazine_mesh.scale = Vector3.ONE
+		for i: int in range(4):
+			var fin := _barrel("HeatSink",Vector3(0,0.025,-0.42-i*0.04),0.08,0.01,Color("e3be78"))
+			fin.material_override = _material(Color("cc8b44"),0.5)
+	else:
+		_shell("LensSpine",Vector3(0,-0.02,-0.51),Vector3(0.08,0.075,0.35),color)
+		_energy_ring(Vector3(0,0.23,-0.42),0.078,Color("c1b9f5"))
+		for side: float in [-1,1]:
+			_shell("FloatingFrame",Vector3(side*0.095,0.03,-0.46),Vector3(0.025,0.033,0.24),Color("9894b9"))
+		_barrel("LensMuzzleCrown",Vector3(0,0.03,-1.06),0.058,0.1,Color("9c98b3"))
+
+func _shell(label: String, at: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
+	var node := MeshInstance3D.new()
+	node.name = label
+	var mesh := SphereMesh.new()
+	mesh.radius = 1
+	mesh.height = 2
+	mesh.radial_segments = 24
+	mesh.rings = 12
+	node.mesh = mesh
+	node.position = at
+	node.scale = size
+	node.material_override = _material(color,0.65)
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	node.ignore_occlusion_culling = true
+	model.add_child(node)
+	return node
+
+func _energy_ring(at: Vector3, radius: float, color: Color) -> void:
+	var node := MeshInstance3D.new()
+	var mesh := TorusMesh.new()
+	mesh.inner_radius = radius-0.01
+	mesh.outer_radius = radius+0.01
+	mesh.rings = 24
+	mesh.ring_segments = 6
+	node.mesh = mesh
+	node.position = at
+	node.rotation.x = PI/2
+	node.material_override = _material(color,0.3,true)
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	node.ignore_occlusion_culling = true
+	model.add_child(node)
+	_element_nodes.append(node)
+
 
 func _box(part_name: String, pos: Vector3, size: Vector3, color: Color, metallic: float = 0.0, parent: Node3D = null) -> MeshInstance3D:
 	var node: MeshInstance3D = MeshInstance3D.new()
 	node.name = part_name
-	var mesh: BoxMesh = BoxMesh.new()
-	mesh.size = size
-	node.mesh = mesh
+	node.mesh = Geometry.chamfer_box(size)
+	node.ignore_occlusion_culling = true
 	node.position = pos
 	node.material_override = _material(color, metallic)
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -57,7 +123,7 @@ func _barrel(part_name: String, pos: Vector3, radius: float, length: float, colo
 	mesh.top_radius = radius
 	mesh.bottom_radius = radius
 	mesh.height = length
-	mesh.radial_segments = 10
+	mesh.radial_segments = 24
 	node.mesh = mesh
 	node.rotation.x = PI * 0.5
 	node.position = pos
@@ -80,9 +146,9 @@ func set_weapon(id: String, stats: Dictionary) -> void:
 	add_child(model)
 	slide = null
 	magazine_mesh = null
-	var accent: Color = stats.get("color", Color("eab96f"))
-	var steel: Color = Color("263b43")
-	var black: Color = Color("17252c")
+	var accent: Color = Color(stats.get("color", Color("eab96f"))).lerp(Color("586773"), 0.65)
+	var steel: Color = Color("34404b")
+	var black: Color = Color("141b23")
 	var brass: Color = Color("d7b974")
 	var muzzle_z: float = -0.46
 	_sight_height = 0.12 if id == "biscuit" else 0.18
@@ -201,6 +267,7 @@ func set_weapon(id: String, stats: Dictionary) -> void:
 		_box("RearSightLeft", Vector3(-0.044, _sight_height, -0.10), Vector3(0.022, 0.048, 0.04), black)
 		_box("RearSightRight", Vector3(0.044, _sight_height, -0.10), Vector3(0.022, 0.048, 0.04), black)
 	var attachments: Dictionary = stats.get("attachments", {})
+	if id in ["tidecaller","night_express","final_frame"]: _signature_shell(id)
 	muzzle_z = _add_attachments(attachments, muzzle_z, steel, accent)
 	var element: String = str(stats.get("element", "none"))
 	if element != "none":
@@ -211,8 +278,19 @@ func set_weapon(id: String, stats: Dictionary) -> void:
 	# Paws keep the rig tied visually to the dachshund protagonist.
 	_box("TriggerPaw", Vector3(0.055, -0.20, 0.02), Vector3(0.15, 0.14, 0.19), Color("b87545"))
 	_box("TealSleeve", Vector3(0.085, -0.26, 0.17), Vector3(0.17, 0.15, 0.25), Color("477e77"))
-	if id != "biscuit":
-		_box("SupportPaw", Vector3(-0.02, -0.12, -0.45), Vector3(0.19, 0.13, 0.18), Color("b87545"))
+	support_hand = _box("SupportPaw", Vector3(-0.035, -0.15, -0.38 if id != "biscuit" else -0.035), Vector3(0.15, 0.115, 0.17), Color("8c664d"))
+	support_hand.set_meta("rest_position", support_hand.position)
+	# Machined side panels, slide serrations and grip ribs catch the local lights.
+	for side: float in [-1.0, 1.0]:
+		_box("RecessedEjectionPort", Vector3(side * 0.073, 0.038, -0.18), Vector3(0.009, 0.045, 0.092), black, 0.2)
+		_box("SerialInlay", Vector3(side * 0.079, -0.008, -0.28), Vector3(0.008, 0.012, 0.075), Color("a3afad"), 0.6)
+		for rib: int in range(6):
+			_box("SlideSerration", Vector3(side * 0.074, 0.055, -0.12 + rib * 0.013), Vector3(0.008, 0.052, 0.006), black)
+		for rib: int in range(5):
+			_box("GripStipple", Vector3(side * 0.060, -0.135 - rib * 0.023, -0.04), Vector3(0.009, 0.008, 0.085), Color("35404a"))
+		if family not in ["pistol", "revolver"]:
+			for vent: int in range(5):
+				_box("MlokVent", Vector3(side * 0.076, 0.005, -0.38 - vent * 0.038), Vector3(0.008, 0.029, 0.024), black)
 	muzzle = Marker3D.new()
 	muzzle.name = "Muzzle"
 	muzzle.position = Vector3(0.0, 0.03, muzzle_z)
@@ -234,6 +312,9 @@ func set_weapon(id: String, stats: Dictionary) -> void:
 	flash_light = OmniLight3D.new()
 	flash_light.name = "MuzzleLight"
 	flash_light.light_color = Color("ffd58e")
+	var shot_tint: Color = {"shock":Color("90d4ec"),"fire":Color("ffc38a"),"cryo":Color("b7c8f1"),"corrosive":Color("a7dd91")}.get(element,Color("ffe1a0"))
+	flash.material_override = _material(shot_tint,0,true)
+	flash_light.light_color = shot_tint
 	flash_light.omni_range = 3.0
 	flash_light.light_energy = 1.7
 	flash_light.shadow_enabled = false
@@ -245,6 +326,8 @@ func set_weapon(id: String, stats: Dictionary) -> void:
 	position = Vector3(0.25, -0.26, -0.34)
 	if is_instance_valid(magazine_mesh):
 		magazine_mesh.set_meta("rest_position", magazine_mesh.position)
+		magazine_mesh.set_meta("rest_rotation", magazine_mesh.rotation)
+		magazine_mesh.set_meta("rest_visible", magazine_mesh.visible)
 	if is_instance_valid(slide):
 		slide.set_meta("rest_position", slide.position)
 
@@ -285,6 +368,8 @@ func _add_attachments(attachments: Dictionary, muzzle_z: float, steel: Color, ac
 					_box("OpticLeft", Vector3(-0.055, _sight_height, -0.19), Vector3(0.022, 0.10, 0.065), steel)
 					_box("OpticRight", Vector3(0.055, _sight_height, -0.19), Vector3(0.022, 0.10, 0.065), steel)
 					_box("OpticTop", Vector3(0.0, _sight_height + 0.05, -0.19), Vector3(0.13, 0.022, 0.065), steel)
+					var dot := _box("OpticReticle",Vector3(0,_sight_height,-0.215),Vector3(0.006,0.006,0.006),Color("c2efd4"))
+					dot.material_override = _material(Color("c2efd4"),0,true)
 			"barrel":
 				var extension: float = 0.20 if id in ["suppressor", "long_barrel"] else 0.07
 				_barrel("AttachmentBarrel_" + id, Vector3(0.0, 0.03, muzzle_z - extension * 0.5), 0.052 if id == "suppressor" else 0.042, extension, steel if id != "ember_barrel" else Color("b66e45"))
@@ -350,15 +435,26 @@ func animate_view(delta: float, is_aiming: bool, movement: float, sprint: bool, 
 		target_rotation = Vector3(0.12, inspect_curve * 0.68, inspect_curve * -0.65)
 		rest += Vector3(-0.09, 0.08, 0.06) * inspect_curve
 	if is_reloading:
-		var dip: float = sin(reload_progress * PI)
-		rest.y -= dip * (0.20 if weapon_id == "hammer" else 0.13)
-		target_rotation = Vector3(-dip * 0.23, dip * 0.25, -dip * (0.65 if weapon_id == "biscuit" else 0.40))
+		var p := clampf(reload_progress, 0, 1)
+		var present := smoothstep(0.0, 0.15, p) * (1.0 - smoothstep(0.88, 1.0, p))
+		rest += Vector3(-0.055, 0.012, 0.025) * present
+		target_rotation = Vector3(-present * 0.14, present * 0.28, -present * (0.72 if family == "pistol" else 0.43))
 		if is_instance_valid(magazine_mesh):
 			var magazine_rest: Vector3 = magazine_mesh.get_meta("rest_position")
-			var drop: float = sin(clampf((reload_progress - 0.15) / 0.65, 0.0, 1.0) * PI)
-			magazine_mesh.position = magazine_rest + Vector3(0.0, -drop * 0.3, drop * 0.06)
-	elif _last_reload and is_instance_valid(magazine_mesh):
-		magazine_mesh.position = magazine_mesh.get_meta("rest_position")
+			var extract := smoothstep(0.18, 0.38, p) * (1.0 - smoothstep(0.57, 0.77, p))
+			if family == "shotgun": extract = absf(sin(clampf((p - 0.18) / 0.64, 0, 1) * PI * 3)) * 0.35
+			magazine_mesh.position = magazine_rest + Vector3(-extract * 0.11, -extract * 0.37, extract * 0.065)
+			magazine_mesh.rotation = Vector3(magazine_mesh.get_meta("rest_rotation")) + Vector3(0,0,-extract * 0.25)
+			magazine_mesh.visible = bool(magazine_mesh.get_meta("rest_visible")) and (family == "shotgun" or p < 0.39 or p > 0.55)
+			support_hand.position = Vector3(support_hand.get_meta("rest_position")).lerp(magazine_mesh.position + Vector3(-0.08, -0.02, 0.035), present)
+		var rack := sin(smoothstep(0.79, 0.95, p) * PI) if reload_was_empty else 0.0
+		if rack > 0: support_hand.position = support_hand.position.lerp(Vector3(-0.07, 0.10, -0.08), rack)
+	else:
+		if is_instance_valid(magazine_mesh):
+			magazine_mesh.position = magazine_mesh.get_meta("rest_position")
+			magazine_mesh.rotation = magazine_mesh.get_meta("rest_rotation")
+			magazine_mesh.visible = magazine_mesh.get_meta("rest_visible")
+		support_hand.position = support_hand.get_meta("rest_position")
 	_last_reload = is_reloading
 	rest.y -= _equip_time * 0.8
 	target_rotation.x -= _equip_time * 0.65
@@ -375,3 +471,4 @@ func animate_view(delta: float, is_aiming: bool, movement: float, sprint: bool, 
 	if is_instance_valid(slide):
 		var slide_rest: Vector3 = slide.get_meta("rest_position")
 		slide.position = slide_rest + Vector3(0.0, 0.0, _recoil * (0.07 if weapon_id == "biscuit" else 0.025))
+		if is_reloading and reload_was_empty: slide.position.z += sin(smoothstep(0.79, 0.95, reload_progress) * PI) * 0.06

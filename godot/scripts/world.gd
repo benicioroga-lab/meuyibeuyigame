@@ -3,6 +3,8 @@ class_name MeyuiWorld
 
 ## Morro do Vento, after the rain: nine districts with physical circulation.
 const Expansion = preload("res://scripts/world_expansion.gd")
+const Destinations = preload("res://scripts/world_destinations.gd")
+const Refinement = preload("res://scripts/world_refinement.gd")
 var game: Node
 var spawn_position := Vector3(0, 0.25, 17)
 var menu_camera_position := Vector3(3.8, 4.3, 23.5)
@@ -73,9 +75,11 @@ var _rain_material: ShaderMaterial
 var _vegetation: Array[Node3D] = []
 var _boss_arena := false
 var _event_id := "none"
-var _event_light := 1.0
+var _event_light := 0.72
 var _graphics: Dictionary = {}
 var _surface_grain: NoiseTexture2D
+var _surface_normal: NoiseTexture2D
+var _shadow_clock := 0.0
 var _effect_level := 1.0
 var _puddles: Array[MeshInstance3D] = []
 var _emissive_materials: Array[Dictionary] = []
@@ -93,16 +97,23 @@ func _ready() -> void:
 	_geometry.name = "PhysicalNeighborhood"
 	navigation_region.add_child(_geometry)
 	Expansion.register(self)
+	Destinations.register(self)
 	_build_lighting()
 	_build_routes()
 	_build_architecture()
 	Expansion.new().build(self)
+	Destinations.new().build(self)
 	_build_interactables()
+	Refinement.new().build(self)
 	_build_rain()
 	call_deferred("_bake_navigation")
 
 func _process(delta: float) -> void:
 	_clock += delta
+	_shadow_clock -= delta
+	if _shadow_clock <= 0:
+		_shadow_clock = 0.3
+		_update_local_shadows()
 	for index in range(mini(3, _lights.size())):
 		var flicker := (sin(_clock * 1.7 + index * 2.0) * 0.075 + sin(_clock * 11.0) * 0.018) * _effect_level
 		_lights[index].light_energy = (2.0 + flicker) * _event_light
@@ -143,12 +154,17 @@ func set_boss_arena(active: bool) -> void:
 
 func set_event(id: String) -> void:
 	_event_id = id
-	_event_light = 0.07 if id == "blackout" else 1.0
+	_event_light = 0.0 if id == "blackout" else 0.72
 	if is_instance_valid(_moon):
-		_moon.light_energy = 0.15 if id == "blackout" else 0.28
+		_moon.light_energy = 0.004 if id == "blackout" else 0.13
 	if _environment != null:
-		_environment.ambient_light_energy = 0.20 if id == "blackout" else (0.32 if id == "storm" else 0.38)
+		_environment.ambient_light_energy = 0.006 if id == "blackout" else (0.08 if id == "storm" else 0.115)
+		_environment.background_color = Color("030508") if id == "blackout" else Color("0c1520")
+		_environment.fog_light_color = Color("06090f") if id == "blackout" else Color("15232f")
+		_environment.fog_light_energy = 0.025 if id == "blackout" else 0.18
 		_environment.fog_density = 0.015 if id == "storm" else 0.008
+	for glow: Dictionary in _emissive_materials:
+		glow.material.emission_energy_multiplier = float(glow.energy) * lerpf(0.15, 1.0, _effect_level) * (0.015 if id == "blackout" else 0.75)
 	for light: OmniLight3D in _lights:
 		light.light_energy = 2.0 * _event_light
 	if _rain_material != null:
@@ -167,14 +183,15 @@ func apply_graphics(values: Dictionary) -> void:
 		material.roughness = lerpf(0.68, 0.13, _effect_level)
 		material.metallic = lerpf(0, 0.38, _effect_level)
 	for glow: Dictionary in _emissive_materials:
-		glow.material.emission_energy_multiplier = float(glow.energy) * lerpf(0.15, 1.0, _effect_level)
+		glow.material.emission_energy_multiplier = float(glow.energy) * lerpf(0.15, 1.0, _effect_level) * (0.015 if _event_id == "blackout" else 0.75)
 	if _environment != null:
 		_environment.fog_enabled = bool(values.get("fog", true))
+		_environment.ssao_enabled = int(values.get("shadows",2)) > 0
+		_environment.glow_enabled = _effect_level > 0.1 and not bool(values.get("reduced_flashes",false))
 	if is_instance_valid(_moon):
 		_moon.shadow_enabled = int(values.get("shadows", 2)) > 0
 		_moon.directional_shadow_max_distance = clampf(float(values.get("render_distance", 120)), 40, 120)
-	for index in range(_lights.size()):
-		_lights[index].shadow_enabled = int(values.get("shadows", 2)) > 1 and index < 2
+	_update_local_shadows()
 	for plant: Node3D in _vegetation:
 		plant.visible = bool(values.get("vegetation", true))
 	if is_instance_valid(_rain):
@@ -245,6 +262,8 @@ func _has_region(id: String) -> bool:
 	return false
 
 func get_region_id(p: Vector3) -> String:
+	if p.x < -17 and p.z > 32: return "cisterna"
+	if p.x > 23 and p.z > 77: return "terminal"
 	if p.x >= 24 and p.z >= 24: return "shopping"
 	if p.x >= 30 and p.z >= -14 and p.z < 24: return "cinema"
 	if p.z >= 26: return "parque"
@@ -269,6 +288,8 @@ func district(p: Vector3) -> String:
 	return "Morro do Vento"
 
 func height_at(x: float, z: float) -> float:
+	if x < -28 and z > 32: return -2
+	if x < -16 and z > 32: return (x+16)/6.0
 	# Used for exterior placement only; actor movement always uses real physics.
 	if z >= 26 or (x >= 30 and z >= -14): return 0
 	if x >= 7.4 and x <= 12.6 and z <= 14 and z >= -2:
@@ -589,6 +610,7 @@ func _build_gates() -> void:
 	_gate("quadra", Vector3(32, 0.3, -32.8), 5, false, "porta_quadra_oficina")
 	_gate("quadra", Vector3(27.4, 0.914, -36), 3.8, true, "porta_quadra_lajes")
 	Expansion.gates(self)
+	Destinations.gates(self)
 	_apply_gate_state()
 
 func _gate(region_id: String, p: Vector3, width: float, along_z: bool, poi_id: String) -> void:
@@ -640,14 +662,23 @@ func _build_lighting() -> void:
 	var environment := Environment.new()
 	_environment = environment
 	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color("15232e")
+	environment.background_color = Color("0c1520")
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color("9dc1d0")
-	environment.ambient_light_energy = 0.38
+	environment.ambient_light_energy = 0.115
+	environment.ssao_enabled = true
+	environment.ssao_radius = 1.4
+	environment.ssao_intensity = 1.5
+	environment.ssao_power = 1.35
+	environment.ssao_light_affect = 0.25
+	environment.glow_enabled = true
+	environment.glow_intensity = 0.45
+	environment.glow_strength = 0.6
+	environment.glow_hdr_threshold = 1.25
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	environment.fog_enabled = true
-	environment.fog_light_color = Color("243c46")
-	environment.fog_light_energy = 0.85
+	environment.fog_light_color = Color("15232f")
+	environment.fog_light_energy = 0.18
 	environment.fog_density = 0.008
 	environment_node.environment = environment
 	add_child(environment_node)
@@ -655,7 +686,7 @@ func _build_lighting() -> void:
 	_moon = moon
 	moon.rotation_degrees = Vector3(-48, -33, 0)
 	moon.light_color = Color("a6cbdc")
-	moon.light_energy = 0.28
+	moon.light_energy = 0.13
 	moon.shadow_enabled = true
 	moon.set_meta("authored_shadow_enabled", true)
 	moon.directional_shadow_max_distance = 90
@@ -724,7 +755,17 @@ func _material(color: Color, emission: float = 0) -> StandardMaterial3D:
 			_surface_grain.seamless = true
 			_surface_grain.color_ramp = ramp
 			_surface_grain.noise = noise
+			_surface_normal = NoiseTexture2D.new()
+			_surface_normal.width = 256
+			_surface_normal.height = 256
+			_surface_normal.seamless = true
+			_surface_normal.as_normal_map = true
+			_surface_normal.bump_strength = 0.4
+			_surface_normal.noise = noise
 		material.albedo_texture = _surface_grain
+		material.normal_enabled = true
+		material.normal_texture = _surface_normal
+		material.normal_scale = 0.055
 		material.uv1_triplanar = true
 		material.uv1_world_triplanar = true
 		material.uv1_scale = Vector3(0.45, 0.45, 0.45)
@@ -741,6 +782,7 @@ func _material(color: Color, emission: float = 0) -> StandardMaterial3D:
 func _box(label: String, p: Vector3, size: Vector3, color: Color, collision: bool = false, emission: float = 0) -> MeshInstance3D:
 	var node := MeshInstance3D.new()
 	node.name = label
+	node.set_meta("authored_label",label)
 	node.position = p
 	var mesh := BoxMesh.new()
 	mesh.size = size
@@ -774,7 +816,7 @@ func _cylinder(label: String, p: Vector3, radius: float, length: float, color: C
 	mesh.top_radius = radius
 	mesh.bottom_radius = radius
 	mesh.height = length
-	mesh.radial_segments = 10
+	mesh.radial_segments = 20
 	node.mesh = mesh
 	node.material_override = _material(color, emission)
 	_geometry.add_child(node)
@@ -822,6 +864,22 @@ func _lamp(p: Vector3, color: Color, radius: float) -> void:
 	light.set_meta("authored_shadow_enabled", _lights.size() < 2)
 	add_child(light)
 	_lights.append(light)
+
+func _update_local_shadows() -> void:
+	for light: OmniLight3D in _lights:
+		light.shadow_enabled = false
+		light.set_meta("authored_shadow_enabled",false)
+	var camera := get_viewport().get_camera_3d()
+	if camera == null: return
+	var quality := int(_graphics.get("shadows",2))
+	var limit := 4 if quality >= 3 else 2 if quality >= 2 else 0
+	var closest := _lights.duplicate()
+	closest.sort_custom(func(a: OmniLight3D,b: OmniLight3D) -> bool: return camera.global_position.distance_squared_to(a.global_position) < camera.global_position.distance_squared_to(b.global_position))
+	for index: int in range(closest.size()):
+		var light: OmniLight3D = closest[index]
+		var enabled := index < limit and light.global_position.distance_to(camera.global_position) < 28 and _event_id != "blackout"
+		light.shadow_enabled = enabled
+		light.set_meta("authored_shadow_enabled",enabled)
 
 func _puddle(p: Vector3, size: Vector2) -> void:
 	var node := MeshInstance3D.new()

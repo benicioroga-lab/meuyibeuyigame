@@ -95,7 +95,8 @@ func _park() -> void:
 		w._box("GardenFootpath", Vector3(rect[0], 0.052, rect[1]), Vector3(rect[2], 0.045, rect[3]), TILE.darkened(0.15))
 	w._edge(Vector3(-14, 0, 32), Vector3(-3, 0, 32), 2)
 	w._edge(Vector3(3, 0, 32), Vector3(24, 0, 32), 2)
-	w._edge(Vector3(-14, 0, 32), Vector3(-14, 0, 72), 2)
+	for ends: Vector2 in [Vector2(32,49.5),Vector2(54.5,63.5),Vector2(68.5,72)]:
+		w._edge(Vector3(-14,0,ends.x),Vector3(-14,0,ends.y),2)
 	w._edge(Vector3(-14, 0, 72), Vector3(24, 0, 72), 2)
 	w._edge(Vector3(24, 0, 32), Vector3(24, 0, 48), 2)
 	w._edge(Vector3(24, 0, 56), Vector3(24, 0, 72), 2)
@@ -149,7 +150,11 @@ func _mall() -> void:
 	_wall_gap(Vector3(24, 0, 49), 50, 8.5, true, 52, 8)
 	_wall_gap(Vector3(48, 0, 24), 48, 8.5, false, 53, 6)
 	w._box("MallEastWall", Vector3(72, 4.25, 49), Vector3(0.35, 8.5, 50), w.TEAL, true)
-	w._box("MallSouthWall", Vector3(48, 4.25, 74), Vector3(48, 8.5, 0.35), w.PLASTER, true)
+	for ends: Vector2 in [Vector2(24,45),Vector2(51,59),Vector2(65,72)]:
+		w._box("MallSouthWall",Vector3((ends.x+ends.y)*0.5,4.25,74),Vector3(ends.y-ends.x,8.5,0.35),w.PLASTER,true)
+	for x: float in [48,62]:
+		w._box("TerminalDoorLintel",Vector3(x,6.5,74),Vector3(6,4,0.35),w.PLASTER,true)
+		w._sign("TERMINAL  →",Vector3(x,3.5,73.7),5,PI)
 	# Upper U route has two independent stairs; the atrium stays open to both floors.
 	w._floor("MallNorthMezzanine", Vector3(48, 4.2, 32.5), Vector2(48, 9))
 	w._floor("MallEastMezzanine", Vector3(68.5, 4.2, 52), Vector2(7, 30))

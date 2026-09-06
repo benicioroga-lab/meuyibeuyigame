@@ -1,7 +1,7 @@
 class_name MeyuiSnapshotValidator
 extends RefCounted
 ## Validate all nested containers before a live scene is replaced.
-const REGIONS := ["patio","mercado","oficina","galeria","lajes","quadra"] + preload("res://scripts/world_expansion.gd").REGION_IDS
+const REGIONS := ["patio","mercado","oficina","galeria","lajes","quadra"] + preload("res://scripts/world_expansion.gd").REGION_IDS + preload("res://scripts/world_destinations.gd").REGION_IDS
 const KINDS := ["grunt","runner","tank","exploder","spitter","screamer","hunter","armored","parasite","summoner","stealth","boss","boss_captain","boss_bulwark","boss_conductor"]
 const DOGS := ["combat","collector","support","guardian"]
 const STATUS := ["burn","corrosive","bleed","cryo","frost","freeze","shock","frenzy"]
@@ -131,6 +131,9 @@ static func _strict_nested(state: Dictionary) -> bool:
 	if not state.perks.get("levels", {}) is Dictionary: return false
 	for id: Variant in state.perks.get("levels", {}):
 		if not Progression.PERKS.has(id) or not _integer(state.perks.levels[id], 0, 100000): return false
+	if not state.perks.get("station_levels", {}) is Dictionary: return false
+	for id: Variant in state.perks.get("station_levels", {}):
+		if not Progression.DistrictPerks.PERKS.has(id) or not _integer(state.perks.station_levels[id],0,100000): return false
 	if not _exploration_state(state.exploration, inventory): return false
 	for id: Variant in state.powerups:
 		if not _enum(id, POWERUPS) or not _number(state.powerups[id], 0) or float(state.powerups[id]) > 120: return false
@@ -206,6 +209,8 @@ static func _dog_state(dog: Dictionary) -> bool:
 			if not Dog.BRANCHES.has(id) or not _integer(dog.levels[id], 0, 1000000000): return false
 	if dog.has("level") and not _integer(dog.level, 1, 10000000000): return false
 	if dog.has("owned_archetypes") and not _enum_array(dog.owned_archetypes, DOGS): return false
+	if dog.has("element") and not _enum(dog.element, ["fire", "shock", "cryo"]): return false
+	if dog.has("resupply_timer") and (not _number(dog.resupply_timer, 0) or float(dog.resupply_timer) > 38): return false
 	if dog.has("archetype") and dog.has("owned_archetypes") and not dog.archetype in dog.owned_archetypes: return false
 	return true
 
@@ -241,6 +246,9 @@ static func _exploration_state(exploration: Dictionary, inventory: RefCounted) -
 		if not _identifier(challenge.get("id")) or not _text(challenge.get("name"), 256) or str(challenge.name).is_empty(): return false
 		if not _enum(challenge.get("region"), REGIONS): return false
 		if not _number(challenge.get("remaining"), 0) or not _integer(challenge.get("kills"), 0, 1000000000) or not _integer(challenge.get("target"), 1, 1000000000): return false
+		if challenge.has("mode") and not _enum(challenge.mode,["hold","kills"]): return false
+		if challenge.has("pressure") and not challenge.pressure is bool: return false
+		if challenge.get("mode", "kills") == "hold" and not position(challenge.get("position")): return false
 	if not exploration.get("used_pois", {}) is Dictionary: return false
 	for id: Variant in exploration.get("used_pois", {}):
 		if not _identifier(id) or not _integer(exploration.used_pois[id], 0, 1000000000): return false

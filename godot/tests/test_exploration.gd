@@ -443,10 +443,10 @@ func _check_pickup_feedback() -> void:
 func _check_challenge_and_ground() -> void:
 	game.round_number = 7
 	game.ui.messages.clear()
-	exploration.challenge = {"region":"patio","kills":11,"target":12}
+	exploration.challenge = {"id":"desafio_sinal","region":"lajes","kills":11,"target":12}
 	var enemy := Node3D.new()
 	game.add_child(enemy)
-	enemy.global_position = Vector3(0, 0.25, 17)
+	enemy.global_position = Vector3(-4,8.2,-28)
 	var before: int = game.coins
 	exploration.on_kill(enemy)
 	_check(game.coins == before + 475 and exploration.challenge.is_empty(), "Challenge pays 300 + 25 per current round exactly once")

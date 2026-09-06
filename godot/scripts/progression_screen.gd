@@ -5,6 +5,7 @@ const Icons = preload("res://scripts/ui_icons.gd")
 const Preview = preload("res://scripts/preview_stage.gd")
 const Data = preload("res://data/game_data.gd")
 const Loot = preload("res://data/loot_data.gd")
+const Equipment = preload("res://data/equipment_data.gd")
 const INK: Color = Color("0c1015")
 const PANEL: Color = Color("141c23")
 const PAPER: Color = Color("e7e2d4")
@@ -13,8 +14,8 @@ const GOLD: Color = Color("d9b477")
 const MINT: Color = Color("80c9b6")
 const CORAL: Color = Color("c76c63")
 const SLOT_NAMES: Dictionary = {"sight":"MIRA", "barrel":"CANO", "underbarrel":"EMPUNHADURA", "magazine":"CARREGADOR", "internal":"MECANISMO"}
-const TAB_NAMES: Dictionary = {"inventory":"INVENTÁRIO", "forge":"BANCADA", "perks":"TALENTOS", "dog":"COMPANHEIRO"}
-const TAB_ICONS: Dictionary = {"inventory":"bag", "forge":"forge", "perks":"chip", "dog":"paw"}
+const TAB_NAMES: Dictionary = {"inventory":"ARSENAL", "supplies":"UTILITÁRIOS", "forge":"BANCADA", "perks":"TALENTOS", "dog":"FARO"}
+const TAB_ICONS: Dictionary = {"inventory":"bag", "supplies":"ammo", "forge":"forge", "perks":"chip", "dog":"paw"}
 
 var game: Node
 var _tab: String = "inventory"
@@ -23,6 +24,10 @@ var _sort: String = "recent"
 var _selected_slot: String = "sight"
 var _show_stock: bool = false
 var _show_details: bool = false
+var _selected_perk: String = "force"
+var _loadout_target := 0
+var _overlay: PanelContainer
+var _overlay_kind := ""
 var _body: MarginContainer
 var _wallet: Label
 var _location: Label
@@ -36,8 +41,17 @@ class WeaponThumbnail:
 	extends Control
 	var family: String = "pistol"
 	var tint: Color = Color("80c9b6")
+	var portrait: Texture2D
+	func set_portrait(value: Texture2D) -> void:
+		portrait = value
+		queue_redraw()
+	func request_portrait(item: Dictionary, stats: Dictionary) -> void:
+		preload("res://scripts/weapon_portraits.gd").request(item, stats, self)
 
 	func _draw() -> void:
+		if portrait != null:
+			draw_texture_rect(portrait, Rect2(Vector2.ZERO, size), false)
+			return
 		var scale_factor: float = minf(size.x / 230.0, size.y / 58.0)
 		draw_set_transform(size * Vector2(0.48, 0.44), 0.0, Vector2.ONE * scale_factor)
 		var long_gun: bool = family not in ["pistol", "revolver", "smg", "improvised"]
@@ -136,12 +150,15 @@ func _ready() -> void:
 
 
 func open(tab: String = "inventory") -> void:
+	_close_overlay()
+	_loadout_target = int(_inventory().active_weapon_slot)
 	_tab = tab if TAB_NAMES.has(tab) else "inventory"
 	visible = true
 	refresh()
 
 
 func close() -> void:
+	_close_overlay()
 	hide()
 
 
@@ -197,17 +214,21 @@ func _refresh_now() -> void:
 			_selected_uid = str(equipped.get("uid", ""))
 	match _tab:
 		"inventory": _build_inventory()
+		"supplies": _build_supplies()
 		"forge": _build_forge()
 		"perks": _build_perks()
 		"dog": _build_dog()
+	if not _overlay_kind.is_empty(): _build_overlay()
 
 
 func _switch_tab(id: String) -> void:
+	_close_overlay()
 	_tab = id
 	refresh()
 
 
 func _close_requested() -> void:
+	_close_overlay()
 	hide()
 	if is_instance_valid(game) and game.has_method("resume_game"):
 		game.call("resume_game")
@@ -269,54 +290,183 @@ func _items() -> Array:
 
 
 func _build_inventory() -> void:
-	var columns: HBoxContainer = _hbox(_body, 18)
-	var collection: VBoxContainer = _vbox(columns, 10)
+	var columns := _hbox(_body, 16)
+	var character := _vbox(columns, 8)
+	character.custom_minimum_size.x = 245
+	character.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	character.size_flags_stretch_ratio = 0.65
+	_label(character, "MEYUI", 25, MINT)
+	_label(character, "EXPLORADOR / ÚLTIMO SINAL", 10, MUTED)
+	var preview := Preview.new()
+	preview.custom_minimum_size = Vector2(210, 220 if _ui_scale > 1.1 else 260)
+	preview.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	character.add_child(preview)
+	if is_instance_valid(game.get("player")): preview.show_character(game.player.hero)
+	var selected := _find_item(_selected_uid)
+	var stats := _stats(selected)
+	var color := _rarity_color(selected.get("rarity", "common"))
+	_label(character, String(stats.get("name", "Selecione uma arma")), 17, color, true)
+	_label(character, _rarity_stars(selected.get("rarity", "common")) + " " + String(stats.get("rarity_name", "")), 11, color)
+	_compare_bars(character, stats, _stats(_equipped()))
+	var details := _button(character, "INSPECIONAR ARMA", _open_item_inspector, "eye")
+	_set_font(details, 11)
+	var equipment := _vbox(columns, 8)
+	equipment.custom_minimum_size.x = 340
+	_label(equipment, "LOADOUT  /  SLOT %d" % (_loadout_target + 1), 13, MINT)
+	_label(equipment, "Selecione a posição para equipar", 10, MUTED)
+	var diamond := preload("res://scripts/loadout_display.gd").new()
+	equipment.add_child(diamond)
+	diamond.selected = _loadout_target
+	diamond.active = int(_inventory().active_weapon_slot)
+	diamond.custom_minimum_size.y = 300 if _ui_scale > 1.1 else 354
+	for index: int in range(4):
+		var item := _find_item(String(_inventory().weapon_slots[index]))
+		var evaluated := _stats(item)
+		diamond.items.append(item)
+		diamond.statistics.append(evaluated)
+		var thumb := WeaponThumbnail.new()
+		thumb.family = evaluated.get("family", "pistol")
+		thumb.tint = _rarity_color(item.get("rarity", "common"))
+		thumb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		thumb.visible = not item.is_empty()
+		diamond.add_child(thumb)
+		thumb.request_portrait(item, evaluated)
+		diamond.thumbnails.append(thumb)
+	diamond.slot_selected.connect(_select_loadout)
+	var equip := _button(equipment, "EQUIPAR NO SLOT %d" % (_loadout_target + 1), _action.bind("equip_to_slot", [_selected_uid, _loadout_target]), "arrow", true)
+	equip.disabled = selected.is_empty() or _inventory().weapon_slots[_loadout_target] == _selected_uid
+	var gear_row := _hbox(equipment, 8)
+	for pair: Array in [[Equipment.GRENADES, "grenade_id", "GRANADA", "blast"], [Equipment.MODULES, "module_id", "MODIFICADOR", "chip"]]:
+		var config: Dictionary = pair[0][_inventory().get(pair[1])]
+		var gear_button := _button(gear_row, pair[2] + "\n" + config.name, _switch_tab.bind("supplies"), pair[3])
+		gear_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_set_font(gear_button, 10)
+		_set_button_height(gear_button, 60)
+	_label(equipment, "1–4  TROCA RÁPIDA   /   SEGURE T  RODA", 10, MUTED).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var collection := _vbox(columns, 8)
 	collection.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	collection.size_flags_stretch_ratio = 1.15
-	var toolbar: HBoxContainer = _hbox(collection, 7)
+	collection.size_flags_stretch_ratio = 1.25
+	var toolbar := _hbox(collection, 5)
+	_label(toolbar, "MOCHILA  %d / %d" % [_items().size(), _inventory().capacity], 12, MINT).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var auto_button := _button(toolbar, "AUTO", _action.bind("auto_equip", []), "bolt")
+	_set_font(auto_button, 10)
+	auto_button.tooltip_text = "Equipar melhor dano sustentado automaticamente"
+	var sorts := _hbox(collection, 3)
+	for pair: Array in [["rarity","RARIDADE"],["damage","DANO"],["recent","RECENTES"]]:
+		var button := _button(sorts, pair[1], _sort_items.bind(pair[0]))
+		_set_font(button, 10)
+		_set_button_height(button, 30)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var scroll := _scroll(collection)
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 7)
+	grid.add_theme_constant_override("v_separation", 7)
+	scroll.add_child(grid)
+	for item: Dictionary in _items(): _item_card(grid, item)
+	var actions := _hbox(collection, 5)
+	for entry: Array in [["star","Favorito","set_item_flag",[_selected_uid,"favorite"]],["coin","Vender","sell_item",[_selected_uid]],["forge","Reciclar","salvage_item",[_selected_uid]],["close","Largar","discard_item",[_selected_uid]]]:
+		var button := _button(actions, "", _action.bind(entry[2], entry[3]), entry[0])
+		button.tooltip_text = entry[1]
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var dealer := _button(collection, "VISITAR ARMEIRO", _open_dealer, "weapon")
+	_set_font(dealer, 11)
+
+func _select_loadout(index: int) -> void:
+	_loadout_target = index
+	refresh()
+
+func _open_item_inspector() -> void:
+	_overlay_kind = "inspect"
+	_build_overlay()
+
+func _open_dealer() -> void:
+	_overlay_kind = "dealer"
+	_build_overlay()
+
+func _close_overlay() -> void:
+	_overlay_kind = ""
+	if is_instance_valid(_overlay):
+		remove_child(_overlay)
+		_overlay.queue_free()
+	_overlay = null
+
+func _build_overlay() -> void:
+	var kind := _overlay_kind
+	_close_overlay()
+	_overlay_kind = kind
+	_overlay = PanelContainer.new()
+	add_child(_overlay)
+	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_overlay.add_theme_stylebox_override("panel", Icons.style(Color("09131c"), Color("396070")))
+	var scroll := _scroll(_overlay)
+	var content := _vbox(scroll, 12)
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(content, "VOLTAR AO ARSENAL", _close_overlay, "close")
+	if kind == "inspect":
+		_build_item_details(content, _find_item(_selected_uid))
+	else:
+		_build_stock(content)
+
+func _build_supplies() -> void:
 	var inventory: Object = _inventory()
-	var count: int = _items().size()
-	var capacity: int = int(inventory.get("capacity")) if is_instance_valid(inventory) else 24
-	var subtitle: Label = _label(toolbar, "MOCHILA  %d / %d" % [count, capacity], 12, MUTED)
-	subtitle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_button(toolbar, "ARMEIRO" if not _show_stock else "MOCHILA", _toggle_stock, "weapon")
-	var auto_button: Button = _button(toolbar, "AUTO", _action.bind("auto_equip", []), "bolt")
-	auto_button.tooltip_text = "Equipa a arma com melhor dano sustentado, considerando críticos e tempo de recarga. Itens marcados como sucata são ignorados."
-	auto_button.disabled = count == 0
-	if _show_stock:
-		_build_stock(collection)
-	else:
-		var sorts: HBoxContainer = _hbox(collection, 4)
-		for pair: Array in [["rarity", "Raridade"], ["damage", "Dano"], ["level", "Nível"], ["type", "Tipo"], ["value", "Valor"], ["recent", "Recentes"]]:
-			var sort_button: Button = _button(sorts, str(pair[1]), _sort_items.bind(str(pair[0])))
-			_set_button_height(sort_button, 31)
-			sort_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			_set_font(sort_button, 11)
-			if _sort == str(pair[0]):
-				sort_button.add_theme_color_override("font_color", GOLD)
-		var scroll: ScrollContainer = _scroll(collection)
-		var grid: GridContainer = GridContainer.new()
-		grid.columns = 2
-		grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		grid.add_theme_constant_override("h_separation", 8)
-		grid.add_theme_constant_override("v_separation", 8)
-		scroll.add_child(grid)
-		for value: Variant in _items():
-			if value is Dictionary:
-				_item_card(grid, value)
-		if count == 0:
-			_empty(collection, "Uma mochila, muitas possibilidades.", "Encontre equipamentos durante a expedição ou visite o Armeiro.", "bag")
-	var detail_panel: PanelContainer = _panel(columns)
-	detail_panel.custom_minimum_size.x = 390
-	detail_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var detail_scroll: ScrollContainer = _scroll(detail_panel)
-	var detail: VBoxContainer = _vbox(detail_scroll, 9)
-	detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var selected: Dictionary = _find_item(_selected_uid)
-	if selected.is_empty():
-		_empty(detail, "Seu próximo equipamento.", "Selecione uma arma para comparar os atributos e preparar sua combinação.", "weapon")
-	else:
-		_build_item_details(detail, selected)
+	var scroll := _scroll(_body)
+	var layout := _vbox(scroll, 16)
+	layout.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_label(layout, "PREPARE A PRÓXIMA HORDA", 24, PAPER)
+	_label(layout, "Cargas limitadas · use durante o combate · seus equipamentos ficam salvos", 12, MUTED)
+	var supplies_row := _hbox(layout, 12)
+	for id: String in Equipment.SUPPLIES:
+		var config: Dictionary = Equipment.SUPPLIES[id]
+		var color := Color(config.color)
+		var card := _panel(supplies_row, color)
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var content := _vbox(card, 8)
+		var top := _hbox(content, 12)
+		_icon(top, config.icon, color, 44)
+		_label(top, "%02d / %02d" % [int(inventory.supplies[id]), int(config.max)], 28, color)
+		_label(content, config.name, 19)
+		_label(content, config.description, 12, MUTED, true)
+		var charges := ProgressBar.new()
+		charges.max_value = config.max
+		charges.value = inventory.supplies[id]
+		charges.show_percentage = false
+		charges.custom_minimum_size.y = 6
+		charges.add_theme_stylebox_override("fill", Icons.style(color, Color.TRANSPARENT, 2))
+		content.add_child(charges)
+		_label(content, "[ %s ]  USAR EM COMBATE" % config.key, 11, color)
+		var buy := _button(content, "+1 CARGA  ·  %d" % config.cost, _action.bind("buy_supply", [id]), "coin", true)
+		buy.disabled = int(inventory.supplies[id]) >= int(config.max) or int(_progress.get("coins", 0)) < int(config.cost)
+	_label(layout, "UMA GRANADA  /  CONTROLE O ESPAÇO", 12, GOLD)
+	_equipment_options(layout, "grenade", Equipment.GRENADES, inventory.grenade_id, inventory.owned_grenades)
+	_label(layout, "UM MODIFICADOR  /  ESCOLHA A SUA SINERGIA", 12, GOLD)
+	_equipment_options(layout, "module", Equipment.MODULES, inventory.module_id, inventory.owned_modules)
+	_label(layout, "DROPS TEMPORÁRIOS  /  ATIVAÇÃO AO RECOLHER", 12, GOLD)
+	var powers := _hbox(layout, 8)
+	for pair: Array in [["ammo", "Munição livre", "24 s"], ["bolt", "Frenesi", "24 s"], ["target", "Dano duplo", "24 s"], ["shock", "Sobrecarga", "24 s"]]:
+		var panel := _panel(powers)
+		panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var body := _vbox(panel, 5)
+		_icon(body, pair[0], MINT, 26)
+		_label(body, pair[1], 13)
+		_label(body, pair[2] + " · drop em combate", 10, MUTED)
+
+func _equipment_options(parent: Node, kind: String, definitions: Dictionary, active: String, owned: Array) -> void:
+	var row := _hbox(parent, 10)
+	for id: String in definitions:
+		var config: Dictionary = definitions[id]
+		var color := Color(config.color)
+		var panel := _panel(row, color if id == active else Color("344653"))
+		panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var content := _vbox(panel, 7)
+		_icon(content, config.icon, color, 30)
+		_label(content, config.name, 16, color, true)
+		_label(content, config.description, 12, MUTED, true)
+		if kind == "grenade": _label(content, "%.0f DANO  /  %.1f m" % [config.damage, config.radius], 11, PAPER)
+		var button := _button(content, "EQUIPADO" if active == id else ("EQUIPAR" if owned.has(id) else "%d PETISCOS" % config.cost), _action.bind("buy_equipment", [kind, id]), "check" if active == id else "arrow")
+		_set_font(button, 11)
+		button.disabled = active == id or (not owned.has(id) and int(_progress.get("coins", 0)) < int(config.cost))
 
 
 func _toggle_stock() -> void:
@@ -366,6 +516,7 @@ func _item_card(parent: Node, item: Dictionary) -> void:
 	thumbnail.custom_minimum_size.y = 47 * _ui_scale
 	thumbnail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(thumbnail)
+	thumbnail.request_portrait(item, stats)
 	_label(content, "%s  ·  NÍVEL %d%s" % [_rarity_stars(str(item.get("rarity", "common"))), int(item.get("level", 1)), "  ·  SUCATA" if bool(item.get("junk", false)) else ""], 10, color)
 	_label(content, "%.1f dano     %.0f DPS" % [float(stats.get("damage", 0)), _dps(stats)], 11, MUTED)
 	_ignore_mouse(content)
@@ -383,6 +534,7 @@ func _build_item_details(parent: Node, item: Dictionary) -> void:
 	thumbnail.tint = color
 	thumbnail.custom_minimum_size.y = 64
 	parent.add_child(thumbnail)
+	thumbnail.request_portrait(item, stats)
 	var equipped_stats: Dictionary = _stats(_equipped())
 	_label(parent, "COMPARAR COM A ARMA EQUIPADA", 10, MUTED)
 	_compare_bars(parent, stats, equipped_stats)
@@ -510,7 +662,7 @@ func _build_forge() -> void:
 	var left: VBoxContainer = _vbox(stage_row, 12)
 	left.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var preview: Preview = Preview.new()
-	preview.custom_minimum_size = Vector2(180, 210)
+	preview.custom_minimum_size = Vector2(180, 270)
 	preview.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	stage_row.add_child(preview)
 	var right: VBoxContainer = _vbox(stage_row, 12)
@@ -529,6 +681,13 @@ func _build_forge() -> void:
 		slot_button.tooltip_text = "Escolher acessórios de " + str(SLOT_NAMES[slot]).to_lower()
 		slot_index += 1
 	preview.show_weapon(selected, stats)
+	var weapon_metrics := _hbox(stage_layout, 16)
+	for pair: Array in [["DPS", "%.0f" % _dps(stats), "target"], ["RPM", "%.0f" % (float(stats.fire_rate) * 60), "bolt"], ["RECARGA", "%.2f s" % float(stats.reload_time), "restart"]]:
+		var metric := _vbox(weapon_metrics, 4)
+		metric.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_icon(metric, pair[2], MINT, 22)
+		_label(metric, pair[1], 23, PAPER)
+		_label(metric, pair[0], 10, MUTED)
 	var upgrade_panel: PanelContainer = _panel(top)
 	upgrade_panel.custom_minimum_size.x = 300
 	var upgrade: VBoxContainer = _vbox(upgrade_panel, 9)
@@ -539,7 +698,8 @@ func _build_forge() -> void:
 	var next_stats: Dictionary = _stats(next_item)
 	_label(upgrade, "MELHORIA %02d  →  %02d" % [level, level + 1], 20)
 	_label(upgrade, "Dano  %.1f  →  %.1f" % [float(stats.get("damage", 0)), float(next_stats.get("damage", 0))], 16, MINT)
-	_label(upgrade, "Pequenos ganhos. A sua arma continua evoluindo.", 11, MUTED, true)
+	_compare_bars(upgrade, next_stats, stats)
+	_label(upgrade, "Peças, elemento e munição preservados. Refinamento sem nível máximo.", 11, MUTED, true)
 	var base_cost: int = Data.upgrade_cost(level)
 	var materials_used: int = mini(int(_progress.get("materials", 0)), floori(base_cost / 4.0))
 	var cost: int = base_cost - materials_used
@@ -609,14 +769,25 @@ func _build_attachments(parent: Node, selected: Dictionary) -> void:
 
 
 func _attachment_card(parent: Node, config: Dictionary, instance: Dictionary, stock: bool) -> void:
-	var panel: PanelContainer = _panel(parent)
+	var rarity := String(instance.get("rarity", "common"))
+	var tint := _rarity_color(rarity)
+	var panel: PanelContainer = _panel(parent, tint)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.custom_minimum_size.x = 175
 	var content: VBoxContainer = _vbox(panel, 5)
+	_icon(content, "aim" if _selected_slot == "sight" else "ammo" if _selected_slot == "magazine" else "chip", tint, 30)
 	_label(content, str(config.get("name", "Acessório")), 13)
-	_label(content, "ARMEIRO" if stock else "NA MOCHILA", 9, MUTED)
+	_label(content, "ARMEIRO" if stock else _rarity_stars(rarity) + " " + _rarity_name(rarity), 9, tint)
 	var effect: String = _attachment_effects(config)
 	_label(content, effect, 10, MINT, true)
+	if not stock:
+		var before := _stats(_find_item(_selected_uid))
+		var changed := _find_item(_selected_uid).duplicate(true)
+		changed.attachments[_selected_slot] = instance
+		var after := _stats(changed)
+		var difference := _dps(after) - _dps(before)
+		_label(content, "DPS %s %.1f" % ["↑" if difference > 0 else "↓" if difference < 0 else "=", absf(difference)], 12, MINT if difference >= 0 else CORAL)
+		_label(content, "Recarga %.2f → %.2f s" % [float(before.reload_time), float(after.reload_time)], 10, MUTED)
 	if stock:
 		var cost: int = int(config.get("price", config.get("cost", 0)))
 		var purchase: Button = _button(content, _number(cost), _action.bind("buy_attachment", [str(config.get("id", ""))]), "coin")
@@ -641,11 +812,26 @@ func _attachment_effects(config: Dictionary) -> String:
 func _build_perks() -> void:
 	var layout: VBoxContainer = _vbox(_body, 9)
 	_label(layout, "TALENTOS  /  CONSTRUA O SEU JEITO DE JOGAR", 12, GOLD)
-	_label(layout, "Cada ramo amplia uma parte da sua expedição. Passe o cursor para conhecer o próximo ganho.", 12, MUTED)
+	_label(layout, "Escolha um nó. Veja o ganho. Invista na sua combinação.", 12, MUTED)
 	var perks: Array = _progress.get("perks", []) if _progress.get("perks", []) is Array else []
 	if perks.is_empty():
 		_empty(layout, "Seu caminho começa aqui.", "Os talentos estarão disponíveis ao iniciar uma expedição.", "chip")
 		return
+	var selected: Dictionary = perks[0]
+	for perk: Dictionary in perks:
+		if perk.id == _selected_perk: selected = perk
+	var inspect := _panel(layout, GOLD)
+	var inspect_row := _hbox(inspect, 18)
+	_icon(inspect_row, _perk_icon(selected.get("icon", "chip"), selected.get("branch", "power")), GOLD, 48)
+	var perk_title := _vbox(inspect_row, 4)
+	perk_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_label(perk_title, String(selected.name).to_upper(), 22)
+	_label(perk_title, "%s · nível %d → %d" % [_branch_name(selected.branch), int(selected.level), int(selected.level) + 1], 12, MUTED)
+	_label(perk_title, "Sem limite de níveis · ganhos graduais e custo crescente", 10, MUTED)
+	var upgrade := _vbox(inspect_row, 4)
+	_label(upgrade, "%s   →   %s" % [selected.value, selected.next_value], 23, MINT)
+	var purchase := _button(upgrade, "INVESTIR  ·  %s" % _number(selected.cost), _action.bind("buy_perk", [selected.id]), "coin", true)
+	purchase.disabled = int(selected.cost) > int(_progress.get("coins", 0))
 	var branches: Dictionary = {}
 	for value: Variant in perks:
 		if value is Dictionary:
@@ -682,10 +868,10 @@ func _build_perks() -> void:
 			var perk: Dictionary = entries[row]
 			var level: int = int(perk.get("level", 0))
 			var cost: int = int(perk.get("cost", 0))
-			var node: Button = _button(graph, "", _action.bind("buy_perk", [str(perk.get("id", ""))]))
+			var node: Button = _button(graph, "", _select_perk.bind(str(perk.get("id", ""))))
 			_set_column(node, column % graph.columns, graph.columns, 10, group_top + (76 + row * 114) * _ui_scale, 94 * _ui_scale)
-			node.add_theme_stylebox_override("normal", Icons.style(Color(color, 0.08), Color(color, 0.6 if level > 0 else 0.22)))
-			node.disabled = cost > int(_progress.get("coins", 0)) or bool(perk.get("locked", false)) or bool(perk.get("maxed", false))
+			node.add_theme_stylebox_override("normal", Icons.style(Color(color, 0.18 if perk.id == _selected_perk else 0.08), Color(color, 1.0 if perk.id == _selected_perk else 0.6 if level > 0 else 0.22)))
+			node.disabled = bool(perk.get("locked", false))
 			node.tooltip_text = str(perk.get("description", perk.get("name", "Talento"))) + "\nAtual: " + str(perk.get("value", "—")) + "  →  Próximo: " + str(perk.get("next_value", "—"))
 			var content: VBoxContainer = VBoxContainer.new()
 			node.add_child(content)
@@ -703,6 +889,10 @@ func _build_perks() -> void:
 			_ignore_mouse(content)
 		column += 1
 	graph.resized.connect(graph.queue_redraw)
+
+func _select_perk(id: String) -> void:
+	_selected_perk = id
+	refresh()
 
 
 func _build_dog() -> void:
@@ -732,8 +922,20 @@ func _build_dog() -> void:
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_dog_branch(left, dog, "attack", "ATAQUE", "weapon", GOLD)
 	_dog_branch(left, dog, "survival", "SOBREVIVÊNCIA", "shield", Color("92afd0"))
+	_dog_branch(left, dog, "elemental", "AFINIDADE", "shock", Color("c6a6ed"))
+	_dog_branch(left, dog, "control", "CAÇADOR", "target", GOLD)
 	_dog_branch(right, dog, "loot", "COLETA", "bag", MINT)
 	_dog_branch(right, dog, "support", "SUPORTE", "heart", Color("b79acb"))
+	_dog_branch(right, dog, "resupply", "INTENDENTE", "ammo", GOLD)
+	_dog_branch(right, dog, "bond", "VÍNCULO VITAL", "heart", CORAL)
+	_label(model_layout, "MORDIDA ELEMENTAL", 12, GOLD).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	for pair: Array in [["fire", "BRASA", "Dano contínuo", "fire"], ["shock", "VOLTAGEM", "Interrompe ataques", "shock"], ["cryo", "GEADA", "Desacelera a perseguição", "cryo"]]:
+		var selected_element: bool = String(dog.get("element", "shock")) == pair[0]
+		var option := _button(model_layout, ("● " if selected_element else "") + pair[1] + "\n" + pair[2], _action.bind("choose_dog_element", [pair[0]]), pair[3])
+		_set_font(option, 12)
+		_set_button_height(option, 58)
+		option.disabled = int(dog.get("levels", {}).get("elemental", 0)) == 0 or selected_element
+	_label(model_layout, "Afinidade Nv. 1 libera as três opções. Troque livremente entre rounds.", 11, MUTED, true)
 	_label(layout, "ESCOLHA A ESPECIALIDADE", 11, MUTED)
 	var archetypes_row: HBoxContainer = _hbox(layout, 9)
 	var archetypes: Array = dog.get("archetypes", []) if dog.get("archetypes", []) is Array else []
@@ -777,6 +979,7 @@ func _dog_branch(parent: Node, dog: Dictionary, id: String, title: String, icon:
 	_label(header, title, 12, color)
 	var level: int = int(branch.get("level", 0))
 	_label(content, _level_pips(level) + "  NV. %d" % level, 10, MUTED)
+	_label(content, str(branch.get("description", "")), 11, MUTED, true)
 	_label(content, "%s  →  %s" % [_short_value(branch.get("value", "—")), _short_value(branch.get("next_value", "—"))], 15, PAPER)
 	var cost: int = int(branch.get("cost", 0))
 	var button: Button = _button(content, "EVOLUIR  ·  " + _number(cost), _action.bind("upgrade_dog", [id]), "arrow")

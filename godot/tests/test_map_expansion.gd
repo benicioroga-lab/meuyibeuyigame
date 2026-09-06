@@ -37,7 +37,7 @@ func _run() -> void:
 	_game.world.import_state({"unlocked_regions":["patio", "mercado"]})
 	var loaded: Dictionary = _game.save_manager.load_slot(1)
 	_check(bool(loaded.get("ok", false)) and _game.apply_snapshot(loaded.get("state", {})), "Snapshot with expansion identifiers loads through the real validator")
-	_check(_game.world.unlocked_regions.size() == 9, "All nine district unlocks survive a full run save/load")
+	_check(_game.world.unlocked_regions.size() == 11, "All eleven district unlocks survive a full run save/load")
 	var legacy: Dictionary = loaded.state.duplicate(true)
 	legacy.world.unlocked_regions = ["patio", "mercado", "oficina", "galeria", "lajes", "quadra"]
 	legacy.exploration.discovered = ["patio", "mercado"]

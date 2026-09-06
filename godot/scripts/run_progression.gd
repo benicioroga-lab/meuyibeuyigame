@@ -17,6 +17,16 @@ const PERKS: Dictionary = {
 	"force": {"name":"Impacto persistente", "icon":"damage", "branch":"power", "cost":180, "stat":"damage", "format":"×%.2f"}
 }
 var levels: Dictionary = {}
+const DistrictPerks = preload("res://data/district_perks.gd")
+var station_levels: Dictionary = {}
+
+func station_cost(id: String) -> int:
+	return DistrictPerks.cost(id, int(station_levels.get(id,0)))
+
+func increment_station(id: String) -> bool:
+	if not DistrictPerks.PERKS.has(id): return false
+	station_levels[id] = int(station_levels.get(id,0)) + 1
+	return true
 
 func cost(id: String) -> int:
 	if not PERKS.has(id): return 0
@@ -29,7 +39,7 @@ func increment(id: String) -> bool:
 	return true
 
 func modifiers() -> Dictionary:
-	return {"damage":1.0 + _log_level("force") * 0.09,
+	var result := {"damage":1.0 + _log_level("force") * 0.09,
 		"move_speed":1.0 + 0.52 * _soft("fleet", 6.0),
 		"jump":1.0 + 0.4 * _soft("spring", 6.0),
 		"reload":1.0 + _log_level("hands") * 0.16,
@@ -40,7 +50,12 @@ func modifiers() -> Dictionary:
 		"crit_chance":0.34 * _soft("eye", 7.0),
 		"crit_multiplier":1.0 + _log_level("execution") * 0.13,
 		"ammo_capacity":1.0 + _log_level("pockets") * 0.22,
-		"loot_luck":1.0 + _log_level("fortune") * 0.15}
+		"loot_luck":1.0 + _log_level("fortune") * 0.15,
+		"dog_damage":1.0}
+	for id: String in station_levels:
+		var stat: String = DistrictPerks.PERKS[id].stat
+		result[stat] = float(result.get(stat, 1.0)) + DistrictPerks.bonus(id, int(station_levels[id]))
+	return result
 
 func describe() -> Array:
 	var result: Array = []
@@ -58,10 +73,13 @@ func describe() -> Array:
 	return result
 
 func export_state() -> Dictionary:
-	return {"levels":levels.duplicate(true)}
+	return {"levels":levels.duplicate(true),"station_levels":station_levels.duplicate(true)}
 
 func import_state(data: Dictionary) -> void:
 	levels.clear()
+	station_levels.clear()
+	for id: String in DistrictPerks.PERKS:
+		station_levels[id] = clampi(int(data.get("station_levels", {}).get(id,0)),0,100000)
 	var source: Dictionary = data.get("levels", {})
 	for id: String in PERKS:
 		levels[id] = clampi(int(source.get(id, 0)), 0, 100000)

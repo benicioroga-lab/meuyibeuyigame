@@ -8,6 +8,8 @@ const GOLD := ICON.GOLD
 const CORAL := ICON.CORAL
 const PAPER := ICON.PAPER
 const MUTED := ICON.MUTED
+const HUD_WHITE := Color("f4f7fb")
+const HUD_MUTED := Color("b6c5d0")
 const DIFFICULTIES := ["easy", "normal", "hard", "insane", "nightmare"]
 const DIFFICULTY_NAMES := ["Fácil", "Normal", "Difícil", "Insano", "Pesadelo"]
 const CATEGORY_NAMES := {"graphics": "IMAGEM", "gameplay": "CONTROLES", "audio": "ÁUDIO", "accessibility": "ACESSIBILIDADE"}
@@ -736,6 +738,8 @@ func _build_shop() -> void:
 	shop.visible = false
 
 func show_inventory(tab: String = "inventory") -> void:
+	notice_time = 0
+	labels.notice.text = ""
 	_show(shop)
 	if shop.has_method("open"): shop.call("open", tab)
 
@@ -762,20 +766,30 @@ func _build_game_over() -> void:
 
 func _build_hud() -> void:
 	hud = _layer(root)
-	var bottom_shade := _gradient(hud, Color.TRANSPARENT, Color(.013, .02, .028, .89), true)
-	_position(bottom_shade, Vector4(0, .7, 1, 1), Vector4.ZERO)
-	var top_shade := _gradient(hud, Color(.013, .02, .028, .67), Color.TRANSPARENT, true)
-	_position(top_shade, Vector4(0, 0, 1, .24), Vector4.ZERO)
+	hud.name = "CombatHUD"
+	var hud_theme := root.theme.duplicate()
+	hud_theme.set_color("font_shadow_color", "Label", Color.TRANSPARENT)
+	hud_theme.set_constant("shadow_offset_y", "Label", 0)
+	hud.theme = hud_theme
+	var bottom_shade := _gradient(hud, Color.TRANSPARENT, Color(.013, .02, .028, .38), true)
+	_position(bottom_shade, Vector4(0, .85, 1, 1), Vector4.ZERO)
+	var top_shade := _gradient(hud, Color(.013, .02, .028, .24), Color.TRANSPARENT, true)
+	_position(top_shade, Vector4(0, 0, 1, .15), Vector4.ZERO)
 	damage_screen = DamageVeil.new()
 	hud.add_child(damage_screen)
 	damage_screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	damage_screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var round_box := _box(hud, 0)
-	_position(round_box, Vector4.ZERO, Vector4(34, 26, 365, 150))
-	_label(round_box, "phase", "A NOITE COMEÇA", 10, GOLD)
-	_label(round_box, "round", "01", 56, CORAL)
-	_label(round_box, "remaining", "ROUND / PREPARE-SE", 12, MUTED)
-	var district := _label(hud, "district", "MORRO DO VENTO", 12)
+	var round_box := _row(hud, 14)
+	round_box.name = "RoundReadout"
+	_position(round_box, Vector4.ZERO, Vector4(36, 28, 298, 88))
+	_hud_backing(round_box,Color("fa8167"))
+	_label(round_box, "round", "01", 46, HUD_WHITE)
+	var round_details := _box(round_box, 4)
+	round_details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	round_details.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_label(round_details, "phase", "ROUND / PREPARE-SE", 10, Color("ffa98f"))
+	_label(round_details, "remaining", "PRÓXIMO SINAL EM 8s", 11, HUD_WHITE)
+	var district := _label(hud, "district", "MORRO DO VENTO", 12, HUD_WHITE)
 	district.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_position(district, Vector4(1, 0, 1, 0), Vector4(-420, 28, -34, 74))
 	var saved := _label(hud, "saved", "EXPEDIÇÃO SALVA", 10, ICON.MINT)
@@ -784,41 +798,77 @@ func _build_hud() -> void:
 	var event_label := _label(hud, "event", "", 12, CORAL)
 	event_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_position(event_label, Vector4(.32, .035, .68, .035), Vector4(0, 0, 0, 32))
-	var vitals := _box(hud, 4)
-	_position(vitals, Vector4(0, 1, 0, 1), Vector4(35, -197, 305, -30))
+	var money_row := _row(hud, 8)
+	_position(money_row, Vector4(0,1,0,1), Vector4(35,-185,301,-145))
+	_icon(money_row, "coin", Color("f2c779"), 22)
+	_label(money_row, "coins", "0", 26, Color("f2c779"))
+	_label(money_row, "coins_gain", "", 15, Color("99edce"))
+	var vitals := _box(hud, 10)
+	vitals.name = "VitalReadout"
+	_position(vitals, Vector4(0, 1, 0, 1), Vector4(36, -132, 300, -32))
+	_hud_backing(vitals,Color("73dbc6"))
 	var critical := _label(hud, "critical_health", "VIDA CRÍTICA / PROCURE ABRIGO", 10, Color("ff6657"))
-	_position(critical, Vector4(0, 1, 0, 1), Vector4(36, -224, 338, -202))
+	_position(critical, Vector4(0, 1, 0, 1), Vector4(36, -213, 338, -191))
 	critical.visible = false
-	var money_row := _row(vitals, 9)
-	_icon(money_row, "coin", GOLD, 24)
-	_label(money_row, "coins", "0", 27, GOLD)
-	_label(money_row, "coins_gain", "", 15, ICON.MINT)
 	var life_row := _row(vitals, 10)
-	_icon(life_row, "paw", PAPER, 35)
+	var portrait := HealthPortrait.new()
+	portrait.custom_minimum_size = Vector2(48,48)
+	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	life_row.add_child(portrait)
 	var life_column := _box(life_row, 0)
 	life_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_label(life_column, "", "MEYUI / ÚLTIMO SINAL", 9, MUTED)
-	_label(life_column, "health", "100 / 100", 25)
-	health_bar = _bar(vitals, GOLD, 6)
-	_label(vitals, "dog", "FARO  ·  NV 1", 11, ICON.MINT)
-	dog_bar = _bar(vitals, ICON.MINT, 3)
-	var ammo := _box(hud, 0)
-	_position(ammo, Vector4(1, 1, 1, 1), Vector4(-330, -176, -36, -35))
-	_label(ammo, "weapon_rarity", "", 9, MUTED).horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_label(ammo, "weapon", "BISCOITEIRA 12", 17, GOLD).horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_label(ammo, "ammo", "12 / 048", 43).horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_label(life_column, "", "MEYUI", 10, HUD_MUTED)
+	_label(life_column, "health", "100 / 100", 27, HUD_WHITE)
+	health_bar = _bar(life_column, Color("73dbc6"), 6)
+	var dog_row := _row(vitals,7)
+	_icon(dog_row,"paw",Color("95c6df"),18)
+	var dog_column := _box(dog_row,4)
+	dog_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_label(dog_column, "dog", "FARO  ·  NV 1", 10, HUD_MUTED)
+	dog_bar = _bar(dog_column, Color("95c6df"), 3)
+	var ammo := _box(hud, 1)
+	ammo.name = "WeaponReadout"
+	_position(ammo, Vector4(1, 1, 1, 1), Vector4(-285, -141, -36, -32))
+	_hud_backing(ammo,Color("f2c779"))
+	_label(ammo, "weapon_rarity", "", 10, HUD_MUTED).horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_label(ammo, "weapon", "BISCOITEIRA 12", 16, HUD_WHITE).horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	var ammo_row := _row(ammo,10)
+	ammo_row.alignment = BoxContainer.ALIGNMENT_END
+	_label(ammo_row,"ammo","12",43,HUD_WHITE).horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	var reserve := _label(ammo_row,"ammo_reserve","/ 048",19,HUD_MUTED)
+	reserve.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	reserve.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	reload_bar = _bar(ammo, GOLD, 3)
-	_label(ammo, "reload", "R  RECARREGAR", 10, MUTED).horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	var keys := _label(hud, "", "TAB  EQUIPAMENTO    /    ESC  PAUSA", 9, MUTED)
+	_label(ammo, "reload", "R  RECARREGAR", 10, HUD_MUTED).horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	var keys := _label(hud, "", "I  INVENTÁRIO     TAB  MELHORIAS     T  ARSENAL", 10, HUD_MUTED)
 	keys.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_position(keys, Vector4(.3, 1, .7, 1), Vector4(0, -26, 0, -8))
+	var utilities := _row(hud, 8)
+	utilities.alignment = BoxContainer.ALIGNMENT_CENTER
+	_position(utilities, Vector4(.28, 1, .72, 1), Vector4(0, -83, 0, -40))
+	for entry: Array in [["grenade", "blast", "G"], ["medkit", "heart", "H"], ["ammo_supply", "ammo", "J"]]:
+		var panel := PanelContainer.new()
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var style := ICON.style(Color("111d28"),Color("354b5c"),3)
+		style.content_margin_left = 9
+		style.content_margin_right = 9
+		style.content_margin_top = 6
+		style.content_margin_bottom = 6
+		panel.add_theme_stylebox_override("panel",style)
+		utilities.add_child(panel)
+		var slot := _row(panel,7)
+		_icon(slot, entry[1], HUD_WHITE, 22)
+		var count := _box(slot,0)
+		count.custom_minimum_size.x = 18
+		_label(count,"",entry[2],9,HUD_MUTED)
+		_label(count, entry[0] + "_count", "0", 16, HUD_WHITE)
 	powerup_display = _row(hud, 18)
 	powerup_display.alignment = BoxContainer.ALIGNMENT_CENTER
-	_position(powerup_display, Vector4(.31, .9, .69, .9), Vector4(0, -14, 0, 26))
-	var objective := _label(hud, "objective", "", 12, MUTED)
+	_position(powerup_display, Vector4(.31, 1, .69, 1), Vector4(0, -136, 0, -95))
+	var objective := _label(hud, "objective", "", 12, HUD_WHITE)
 	objective.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_wrap(objective)
-	_position(objective, Vector4(.29, .82, .71, .82), Vector4(0, 0, 0, 57))
+	_position(objective, Vector4(.29, 1, .71, 1), Vector4(0, -187, 0, -148))
 	var interaction := _label(hud, "interaction", "", 16, GOLD)
 	interaction.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_wrap(interaction)
@@ -839,6 +889,42 @@ func _build_hud() -> void:
 	boss_bar = _bar(boss_display, CORAL, 5)
 	_label(boss_display, "boss_phase", "", 10, MUTED).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_build_loot_comparison()
+
+class HealthPortrait:
+	extends Control
+	func _draw() -> void:
+		var c := size*0.5
+		draw_circle(c,20,Color("16333c"))
+		draw_arc(c,20,-PI/2,PI*1.35,36,Color("80c9b6"),1.5,true)
+		draw_style_box(ICON.style(Color("b7784e"),Color.TRANSPARENT,7),Rect2(c+Vector2(-9,-11),Vector2(17,23)))
+		draw_style_box(ICON.style(Color("bf8e5c"),Color.TRANSPARENT,5),Rect2(c+Vector2(0,-3),Vector2(17,11)))
+		draw_style_box(ICON.style(Color("6c4934"),Color.TRANSPARENT,5),Rect2(c+Vector2(-12,-7),Vector2(8,23)))
+		draw_circle(c+Vector2(5,-4),2,Color("091217"))
+		draw_circle(c+Vector2(16,0),3,Color("091217"))
+
+func _hud_backing(control: Control, color: Color) -> void:
+	var background := Panel.new()
+	background.name = control.name + "Background"
+	control.get_parent().add_child(background)
+	control.get_parent().move_child(background,control.get_index())
+	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	control.item_rect_changed.connect(_place_hud_backing.bind(control,background))
+	_place_hud_backing.call_deferred(control,background)
+	# A sibling before the content guarantees that opaque fill never covers text.
+	background.set_meta("hud_backing",true)
+	var style := ICON.style(Color("101b25"),Color("354756"),3)
+	style.border_color = color.darkened(.38)
+	style.border_width_left = 3
+	style.border_width_top = 1
+	style.border_width_bottom = 1
+	style.border_width_right = 1
+	background.add_theme_stylebox_override("panel",style)
+
+func _place_hud_backing(control: Control, background: Control) -> void:
+	if not is_instance_valid(control) or not is_instance_valid(background): return
+	background.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	background.position = control.position - Vector2(12,9)
+	background.size = control.size + Vector2(24,18)
 
 func _bar(parent: Node, color: Color, height: float) -> ProgressBar:
 	var bar := ProgressBar.new()
@@ -963,6 +1049,10 @@ func show_game_over(round_number: int, coins: int) -> void:
 	_show(game_over)
 
 func update_hud(data: Dictionary) -> void:
+	var supply_counts: Dictionary = data.get("supplies", {})
+	for entry: Array in [["grenade", "grenade", "G"], ["medkit", "medkit", "H"], ["ammo_supply", "ammo", "J"]]:
+		if labels.has(entry[0] + "_count"):
+			labels[entry[0] + "_count"].text = str(int(supply_counts.get(entry[1], 0)))
 	last_hud = data.duplicate()
 	if not is_instance_valid(hud): return
 	labels.round.text = "%02d" % int(data.get("round", 1))
@@ -988,7 +1078,13 @@ func update_hud(data: Dictionary) -> void:
 	dog_bar.value = 100 * float(data.get("dog_health", 100)) / maxf(1.0, float(data.get("dog_max_health", 100)))
 	labels.weapon.text = str(data.get("weapon_name", "Biscoiteira 12")).to_upper()
 	labels.weapon_rarity.text = str(data.get("weapon_rarity", data.get("rarity", ""))).to_upper()
-	labels.ammo.text = "%02d / %03d" % [int(data.get("magazine", 0)), int(data.get("reserve", 0))]
+	if is_instance_valid(game) and game.get("inventory") != null:
+		labels.weapon_rarity.text += "   /   SLOT %d" % (int(game.inventory.active_weapon_slot)+1)
+		var tint: Color = preload("res://data/loot_data.gd").rarity_color(str(game.inventory.equipped().get("rarity","common")))
+		labels.weapon.add_theme_color_override("font_color",tint)
+	labels.ammo.text = "%02d" % int(data.get("magazine",0))
+	labels.ammo_reserve.text = "/ %03d" % int(data.get("reserve",0))
+	labels.ammo.add_theme_color_override("font_color",Color("ff806f") if int(data.get("magazine",0)) <= 2 else HUD_WHITE)
 	var progress := float(data.get("reload_progress", 0))
 	reload_bar.value = progress * 100
 	reload_bar.visible = progress > 0
@@ -1005,6 +1101,7 @@ func update_hud(data: Dictionary) -> void:
 	labels.boss_phase.text = "FASE %d / %d" % [int(data.get("boss_phase", 1)), int(data.get("boss_phases", 3))]
 	var interaction: Dictionary = data.get("interaction", {}) if data.get("interaction", {}) is Dictionary else {}
 	labels.interaction.text = "%s  %s%s" % [str(interaction.get("prompt", "E")), str(interaction.get("name", "")), " / %d PETISCOS" % int(interaction.cost) if int(interaction.get("cost", 0)) > 0 else ""] if not interaction.is_empty() else ""
+	if not str(interaction.get("description","")).is_empty(): labels.interaction.text += "\n" + str(interaction.description)
 	if bool(data.get("saved", false)): saved_time = 2.5
 	var comparison: Dictionary = data.get("loot_compare", {}) if data.get("loot_compare", {}) is Dictionary else {}
 	if comparison.is_empty() and interaction.get("comparison", {}) is Dictionary: comparison = interaction.get("comparison", {})
@@ -1094,7 +1191,7 @@ func _update_loot(value: Variant) -> void:
 		row.arrow.add_theme_color_override("font_color", ICON.MINT if change > .001 else (CORAL if change < -.001 else MUTED))
 		row.meter.value = 100 * after / maxf(.01, maxf(before, after) * 1.12)
 		row.meter.get_theme_stylebox("fill").bg_color = ICON.MINT if change > .001 else (CORAL if change < -.001 else GOLD)
-	labels.loot_prompt.text = "E  RECOLHER    /    TAB  EQUIPAMENTO"
+	labels.loot_prompt.text = "E  RECOLHER    F  TROCAR / DEIXAR ATUAL"
 	if kind == "ammo":
 		var quantity := int(item.get("amount", stats.get("amount", 0)))
 		var accepted := int(stats.get("collectable", quantity))
@@ -1182,6 +1279,7 @@ func show_damage(amount: float = 1.0, direction: Vector2 = Vector2.ZERO, absorbe
 	damage_screen.receive(strength, direction, absorbed)
 
 func announce(title: String, subtitle: String = "") -> void:
+	if is_instance_valid(game.get("coop")) and game.coop.has_method("relay_announcement") and game.coop.relay_announcement(title,subtitle): return
 	labels.announcement_title.text = title.to_upper()
 	labels.announcement_subtitle.text = subtitle
 	announcement_time = 2.7

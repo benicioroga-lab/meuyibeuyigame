@@ -6,6 +6,8 @@ const ActorVisual = preload("res://scripts/actor_visual.gd")
 const Data = preload("res://data/enemy_data.gd")
 
 var game: Node
+var network_replica := false
+var network_last_attacker := 1
 var kind: String = "grunt"
 var health: float = 42.0
 var max_health: float = 42.0
@@ -104,19 +106,19 @@ func _ready() -> void:
 	floor_snap_length = 0.55
 	floor_max_angle = deg_to_rad(50.0)
 	floor_stop_on_slope = true
+	_visual = ActorVisual.build_enemy(self, kind)
 	var body_shape := CapsuleShape3D.new()
 	body_shape.radius = 0.31 * _size
-	body_shape.height = 1.75 * _size
+	body_shape.height = float(_visual.get("collision_height", 1.75)) * _size
 	var body_collision := CollisionShape3D.new()
 	body_collision.shape = body_shape
 	body_collision.position.y = body_shape.height * 0.5
 	add_child(body_collision)
-	_visual = ActorVisual.build_enemy(self, kind)
 	_model = _visual.get("root") as Node3D
 	_model.scale = Vector3.ONE * _size
 	var visual_scale: float = _size
-	_add_hit_zone("head", Vector3(0, 1.55, 0) * visual_scale, Vector3(0.245, 0.245, 0.245) * visual_scale, true)
-	_add_hit_zone("body", Vector3(0, 1.03, 0) * visual_scale, Vector3(0.7, 0.66, 0.43) * visual_scale)
+	_add_hit_zone("head", Vector3(_visual.get("head_at", Vector3(0, 1.55, 0))) * visual_scale, Vector3(0.245, 0.245, 0.245) * visual_scale, true)
+	_add_hit_zone("body", Vector3(_visual.get("body_at", Vector3(0, 1.03, 0))) * visual_scale, Vector3(_visual.get("body_size", Vector3(0.7, 0.66, 0.43))) * visual_scale)
 	_add_hit_zone("leg", Vector3(0, 0.37, 0) * visual_scale, Vector3(0.58, 0.61, 0.39) * visual_scale)
 	_agent = NavigationAgent3D.new()
 	# Arrival stays inside the baked corner clearance, including the ~0.1 m
@@ -227,7 +229,13 @@ func _add_hit_zone(zone: String, center: Vector3, size: Vector3, sphere: bool = 
 
 
 func _physics_process(delta: float) -> void:
-	if not is_instance_valid(game) or not game.running or game.paused:
+	if network_replica:
+		if is_instance_valid(game.get("coop")): game.coop._interpolate_actor(self, delta)
+		for shot: Dictionary in _projectiles:
+			if is_instance_valid(shot.node): shot.node.global_position += Vector3(shot.velocity) * delta
+		_animate(delta)
+		return
+	if not is_instance_valid(game) or not game.running or (game.simulation_paused() if game.has_method("simulation_paused") else game.paused):
 		return
 	if dead:
 		_death_time += delta
@@ -323,6 +331,15 @@ func _physics_process(delta: float) -> void:
 func _combat_target() -> Node3D:
 	if _aggro_timer > 0.0 and is_instance_valid(_aggro_target) and float(_aggro_target.get("health")) > 0.0:
 		return _aggro_target
+	if is_instance_valid(game.get("coop")) and game.coop.is_host():
+		var nearest: Node3D
+		var distance := INF
+		for actor: Node3D in game.coop.combat_targets():
+			var candidate := global_position.distance_squared_to(actor.global_position)
+			if candidate < distance:
+				distance = candidate
+				nearest = actor
+		return nearest
 	if is_instance_valid(game.player) and game.player.health > 0.0:
 		return game.player as Node3D
 	return null
@@ -353,6 +370,11 @@ func _clear_sight(target: Node3D, block_gates: bool = false) -> bool:
 
 
 func take_damage(amount: float, zone: String = "body", source: String = "player") -> float:
+	if network_replica: return 0.0
+	if is_instance_valid(game.get("coop")) and game.coop.is_host():
+		if source == "status" and network_last_attacker != game.coop.current_peer_id and (network_last_attacker == 1 or game.coop.peers.has(network_last_attacker)):
+			return float(game.coop.with_peer(network_last_attacker, func(): return take_damage(amount, zone, source)))
+		network_last_attacker = game.coop.current_peer_id
 	if dead or amount <= 0.0:
 		return 0.0
 	var multiplier: float = 1.75 if zone == "head" else (0.65 if zone == "leg" else 1.0)
@@ -374,7 +396,9 @@ func take_damage(amount: float, zone: String = "body", source: String = "player"
 		# distract the whole horde. The Guardian's explicit taunt remains separate.
 		var player_close: bool = is_instance_valid(game.player) and global_position.distance_to(game.player.global_position) < _reach + 0.35
 		if not player_close and _dog_retaliation_cooldown <= 0.0:
-			taunt(get_tree().get_first_node_in_group("meyui_companion") as Node3D, 0.8)
+			var dog: Node3D = game.get("companion") as Node3D
+			if not is_instance_valid(dog): dog = get_tree().get_first_node_in_group("meyui_companion") as Node3D
+			taunt(dog, 0.8)
 			_dog_retaliation_cooldown = 4.0
 	if is_instance_valid(game) and game.has_method("on_enemy_damaged"):
 		game.on_enemy_damaged(self, actual, zone, source)
@@ -412,7 +436,7 @@ func _deal_damage(target: Node3D, amount: float) -> float:
 	if not is_instance_valid(target) or not target.has_method("take_damage"):
 		return 0.0
 	var before: float = maxf(0.0, float(target.get("health")))
-	if target == game.player:
+	if target == game.player or target is MeyuiPlayer:
 		target.take_damage(amount, self)
 	else:
 		target.take_damage(amount)
@@ -434,7 +458,7 @@ func _update_fire(delta: float) -> void:
 	if _fire_tick >= 0.6:
 		_fire_tick = 0.0
 		if float(_fire_target.get("health")) > 0.0 and _fire_target.has_method("take_damage"):
-			if _fire_target == game.player:
+			if _fire_target == game.player or _fire_target is MeyuiPlayer:
 				_fire_target.take_damage(2.0, self)
 			else:
 				_fire_target.take_damage(2.0)
@@ -538,11 +562,12 @@ func _finish_special(target: Node3D) -> void:
 
 func _radial_attack(radius: float, amount: float, jump_height: float = 0.68) -> void:
 	var targets: Array[Node3D] = []
-	if is_instance_valid(game.player):
-		targets.append(game.player as Node3D)
-	var dog := get_tree().get_first_node_in_group("meyui_companion") as Node3D
-	if is_instance_valid(dog):
-		targets.append(dog)
+	if is_instance_valid(game.get("coop")) and game.coop.is_host():
+		targets = game.coop.combat_targets(true)
+	else:
+		if is_instance_valid(game.player): targets.append(game.player as Node3D)
+		var dog := get_tree().get_first_node_in_group("meyui_companion") as Node3D
+		if is_instance_valid(dog): targets.append(dog)
 	for target in targets:
 		var offset: Vector3 = target.global_position - global_position
 		if Vector2(offset.x, offset.z).length() < radius and offset.y > -1.0 and offset.y < jump_height and _clear_sight(target):
@@ -652,6 +677,15 @@ func _animate(delta: float) -> void:
 	if is_instance_valid(right_arm):
 		right_arm.rotation.x = lerpf(right_arm.rotation.x, -1.75 if attack_pose else step * 0.4 * amount, delta * 16.0)
 	_model.position.y = absf(cos(gait)) * 0.035 * amount
+	if _visual.get("morphology") == "crawler":
+		for index: int in range(_visual.limbs.size()):
+			var limb: Node3D = _visual.limbs[index]
+			limb.rotation.x = sin(gait + (PI if index % 2 == 0 else 0)) * 0.55 * amount
+			limb.position.y = (0.64 if index < 2 else (0.54 if kind == "parasite" and index < 4 else 0.62)) + maxf(0, sin(gait + index * PI)) * 0.065 * amount
+	if _visual.get("morphology") == "wraith":
+		_model.position.y = 0.06 + sin(float(Time.get_ticks_msec()) * 0.002 + _round) * 0.045
+		left_leg.rotation.x = 0.15
+		right_leg.rotation.x = -0.15
 	var local_floor: Vector3 = global_basis.inverse() * get_floor_normal() if is_on_floor() else Vector3.UP
 	var slope_lean: float = clampf(atan2(local_floor.z, maxf(0.1, local_floor.y)), -0.4, 0.4)
 	_turn_lean = lerpf(_turn_lean, clampf(angle_difference(_last_yaw, rotation.y) / maxf(delta, 0.001) * -0.035, -0.16, 0.16), delta * 7.0)

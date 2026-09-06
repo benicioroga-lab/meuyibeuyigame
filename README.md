@@ -55,12 +55,17 @@ Se o PowerShell bloquear scripts, importe o projeto pelo editor ou execute a eng
 | Esquerdo / direito | Atirar / mirar |
 | R | Recarregar |
 | Espaço / Shift | Pular / esquiva e corrida |
+| Ctrl / Z | Agachar / mergulho com impulso |
 | E | Recolher loot e interagir com portas/estações |
+| F, olhando uma arma | Trocar pela arma da mão e deixar a anterior no chão |
+| 1–4 / segurar T | Selecionar slot equipado / abrir roda de armas |
+| G / H / J | Granada / kit de cura / caixa de munição |
 | Tab / I | Bancada de melhorias / inventário |
 | C | Faro: caçar / acompanhar |
 | F1 | Alternar primeira e terceira pessoa |
 | L / V | Lanterna / inspecionar arma |
 | Esc | Pausar e abrir configurações |
+| F8 | Hospedar ou entrar no cooperativo por IP |
 
 Depois de atualizar o código, pare a execução e pressione **F5** novamente. Os saves ficam fora do repositório, em `%APPDATA%\Godot\app_userdata\Meyui Beuyi · Morro do Vento\`, com três slots, backups e preferências separadas. Os saves do navegador pertencem ao protótipo web.
 
@@ -72,7 +77,15 @@ Veja o [guia completo da versão Godot](godot/README.md) para arquitetura, siste
 
 No Pátio do Farol, siga a placa **Jardim** e use **E** no portão (120 petiscos, round 1). O **Jardim das Nascentes** tem árvores, fonte, estufa com baú, quiosque e um desafio de defesa. Pelo jardim, entre no **Shopping Aurora** (320, round 2), com lojas acessíveis, café, arsenal, oficina e mezanino com duas escadas. O **Cine Última Luz** (480, round 3) conecta o shopping à antiga Oficina Suspensa: explore bilheteria, plateia, palco e arquivo do projecionista.
 
-As nove regiões formam circuitos de exploração; os portões funcionam pelos dois lados. Saves anteriores continuam válidos e passam a oferecer os novos acessos. O mapa ampliado pertence à versão **Godot**.
+O jardim também dá acesso à **Casa das Bombas** (360, round 3): desça entre reservatórios e mantenha o painel sob controle durante 35 segundos enquanto a horda pressiona. Pelo shopping, abra o **Terminal da Madrugada** (600, round 5), com bondes, despacho e um desafio de 18 eliminações. Cada uma das **onze regiões** tem um perk exclusivo vendido em uma estação física: aproxime-se, veja o ganho e pressione **E**. Esses perks não aparecem à venda no menu de talentos.
+
+As regiões formam circuitos; portões funcionam pelos dois lados. Saves anteriores continuam válidos e oferecem os novos acessos. Esta expansão pertence à versão **Godot**.
+
+### Jogar com outra pessoa
+
+No host, inicie/carregue a expedição e use **F8 → Hospedar**. No outro computador, use **Cooperativo · F8**, ainda no menu principal, e informe o IP do host e a porta **27842 UDP**. Em casas diferentes, podem usar uma mesma VPN, como Hamachi. Ambos precisam da mesma versão do jogo.
+
+O cooperativo aceita até quatro jogadores, com inventário, petiscos e Faro individuais. A vida dos inimigos cresce 80% por participante adicional. Menus não pausam o combate online. O [guia de multiplayer](godot/README_MULTIPLAYER.md) explica conexão, firewall, saves e reconexão. A validação automatizada usa dois processos locais; a rede entre os computadores de vocês ainda precisa ser testada.
 
 ## Protótipo web
 

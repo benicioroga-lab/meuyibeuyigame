@@ -10,6 +10,7 @@ static var _models: Dictionary = {}
 static var _materials: Dictionary = {}
 static var _primitives: Dictionary = {}
 static var _batched_material: ShaderMaterial
+static var _rarity_materials: Dictionary = {}
 
 static func model(kind: String, payload: Dictionary) -> ArrayMesh:
 	var signature := _signature(kind, payload)
@@ -22,7 +23,8 @@ static func model(kind: String, payload: Dictionary) -> ArrayMesh:
 		"currency": _currency(parts)
 		"powerup": _powerup(parts, str(payload.get("id", "")))
 		_: _ammunition(parts)
-	var mesh := _merge(parts, _palette(kind, payload))
+	if kind == "weapon" and bool(Data.WEAPONS.get(str(payload.get("model_id","")),{}).get("legendary_only",false)): _signature_geometry(parts,payload)
+	var mesh := _merge(parts, _palette(kind, payload), Loot.rarity_rank(str(payload.get("rarity","common"))) if kind == "weapon" else -1)
 	if _models.size() >= MAX_CACHED_MODELS: _models.erase(_models.keys()[0])
 	_models[signature] = mesh
 	return mesh
@@ -232,8 +234,14 @@ static func _powerup(parts: Array[Dictionary], id: String) -> void:
 static func _box(parts: Array[Dictionary], at: Vector3, size: Vector3, surface: int, angle: float = 0.0) -> void:
 	var key := "b" + str(size)
 	if not _primitives.has(key):
-		var mesh := BoxMesh.new()
-		mesh.size = size
+		var mesh: Mesh
+		if minf(size.x, minf(size.y, size.z)) > 0.04:
+			mesh = preload("res://scripts/weapon_geometry.gd").chamfer_box(size)
+		else:
+			# Thin seams and cartridge labels do not benefit from bevel geometry.
+			var plate := BoxMesh.new()
+			plate.size = size
+			mesh = plate
 		_primitives[key] = mesh
 	parts.append({"mesh":_primitives[key], "transform":Transform3D(Basis(Vector3.FORWARD, angle), at), "surface":surface})
 
@@ -249,7 +257,32 @@ static func _cylinder(parts: Array[Dictionary], at: Vector3, radius: float, heig
 		_primitives[key] = mesh
 	parts.append({"mesh":_primitives[key], "transform":Transform3D(Basis(Vector3.FORWARD, PI * 0.5) if horizontal else Basis.IDENTITY, at), "surface":surface})
 
-static func _merge(parts: Array[Dictionary], palette: Array[Material]) -> ArrayMesh:
+static func _signature_geometry(parts: Array[Dictionary], payload: Dictionary) -> void:
+	# Sculpt the receiver without losing the fitted optic/barrel/grip geometry.
+	for part: Dictionary in parts:
+		var size: Vector3 = part.mesh.get_aabb().size
+		if size.x > 0.28 and size.y > 0.10 and size.z > 0.10 and part.mesh is ArrayMesh:
+			var shell := SphereMesh.new()
+			shell.radius = 0.5
+			shell.height = 1
+			shell.radial_segments = 12
+			shell.rings = 6
+			part.mesh = shell
+			part.transform.basis = part.transform.basis.scaled(size * Vector3(1.1,1.25,1.2))
+	var id: String = payload.model_id
+	if id == "tidecaller":
+		for z: float in [-0.13,0.13]: _cylinder(parts,Vector3(0.33,0.035,z),0.035,0.48,4)
+	elif id == "night_express":
+		var drum := CylinderMesh.new()
+		drum.top_radius = 0.18
+		drum.bottom_radius = 0.18
+		drum.height = 0.22
+		drum.radial_segments = 16
+		parts.append({"mesh":drum,"transform":Transform3D(Basis(Vector3.RIGHT,PI/2),Vector3(0.02,-0.16,0)),"surface":3})
+	else:
+		for z: float in [-0.11,0.11]: _cylinder(parts,Vector3(0.45,0.065,z),0.022,0.54,4)
+
+static func _merge(parts: Array[Dictionary], palette: Array[Material], rarity: int = -1) -> ArrayMesh:
 	var tool := SurfaceTool.new()
 	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for part: Dictionary in parts:
@@ -267,7 +300,11 @@ static func _merge(parts: Array[Dictionary], palette: Array[Material]) -> ArrayM
 			tool.set_normal(transform.basis * normals[index])
 			tool.add_vertex(transform * vertices[index])
 	tool.index()
-	tool.set_material(_ground_material())
+	if not _rarity_materials.has(rarity):
+		var material: ShaderMaterial = _ground_material().duplicate()
+		material.set_shader_parameter("rarity_glow", 0.70 if rarity == 5 else 0.45 if rarity == 4 else 0.12 if rarity >= 0 else 0.0)
+		_rarity_materials[rarity] = material
+	tool.set_material(_rarity_materials[rarity])
 	return tool.commit()
 
 static func _ground_material() -> ShaderMaterial:
@@ -275,11 +312,13 @@ static func _ground_material() -> ShaderMaterial:
 	var shader := Shader.new()
 	shader.code = """shader_type spatial;
 render_mode diffuse_burley, specular_schlick_ggx;
+uniform float rarity_glow = 0.0;
 void fragment() {
 	ALBEDO = COLOR.rgb;
 	METALLIC = min(COLOR.a, 0.8);
 	ROUGHNESS = mix(0.68, 0.38, COLOR.a);
-	EMISSION = COLOR.rgb * mix(0.12, 0.68, step(0.95, COLOR.a));
+	float rim = pow(1.0 - max(dot(normalize(NORMAL), normalize(VIEW)),0.0),2.5);
+	EMISSION = COLOR.rgb * (mix(0.12, 0.68, step(0.95, COLOR.a)) + rarity_glow * (0.4 + rim * 2.5));
 }
 """
 	_batched_material = ShaderMaterial.new()

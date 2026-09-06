@@ -16,6 +16,7 @@ const ALIASES: Dictionary = {
 	"hover": "ui_hover", "click": "ui_click", "region_unlock": "discovery",
 }
 const COOLDOWNS: Dictionary = {
+	"weapon_drop":0.12, "loot_legendary":0.65, "loot_mythic":0.65, "door_unlock":0.3,
 	"hit": 0.025, "headshot": 0.06, "kill": 0.06, "coin": 0.08,
 	"dog": 0.22, "hurt": 0.12, "shield": 0.12, "empty": 0.12, "round": 0.3, "victory": 0.5,
 	"ui_hover": 0.07, "ui_click": 0.055, "loot_common": 0.08, "event": 0.5, "boss": 0.8,
@@ -191,7 +192,7 @@ func play(cue: String, weapon_id: String = "biscuit") -> void:
 	var category := _cue_category(key)
 	voice.set_meta("audio_category", category)
 	voice.volume_db = _effect_gain(category)
-	voice.pitch_scale = _random.randf_range(0.96, 1.04) if key.begins_with("shot_") or key == "dog" else 1.0
+	voice.pitch_scale = _random.randf_range(0.91, 1.09) if key.begins_with("step") else (_random.randf_range(0.96, 1.04) if key.begins_with("shot_") or key == "dog" else 1.0)
 	voice.play()
 	if key in ["round", "victory", "hurt", "shield", "boss", "event", "loot_mythic", "loot_legendary"]:
 		_duck = maxf(_duck, 0.28 if key == "hurt" else 0.12 if key == "shield" else 0.7)
@@ -199,6 +200,7 @@ func play(cue: String, weapon_id: String = "biscuit") -> void:
 
 
 func _shot_key(weapon_id: String) -> String:
+	if weapon_id in ["tidecaller","night_express","final_frame"]: return "shot_"+weapon_id
 	match weapon_id.to_lower():
 		"hammer", "cascade", "horizon", "zero", "heavy", "shotgun", "sniper", "doorman", "lookout", "comet":
 			return "shot_heavy"
@@ -214,7 +216,7 @@ func _apply_volume() -> void:
 
 
 func _cue_category(key: String) -> String:
-	if key.begins_with("shot_") or key in ["reload", "reload_insert", "empty"]:
+	if key.begins_with("shot_") or key in ["reload", "reload_insert", "empty", "mag_out", "mag_in", "chamber"]:
 		return "weapons"
 	if key in INTERFACE_CUES:
 		return "interface"
@@ -366,7 +368,68 @@ func _render_library() -> void:
 	_noise(step, 0.0, 0.07, 0.085, 850.0)
 	_tone(step, 0.0, 0.06, 86.0, 45.0, 0.06)
 	_streams["step"] = _pcm(step)
+	_render_movement()
+	for id: String in ["tidecaller","night_express","final_frame"]:
+		var sound := _buffer(0.36 if id != "final_frame" else 0.65)
+		_noise(sound,0,0.06,0.38,3200 if id == "night_express" else 1850)
+		_tone(sound,0,0.18,135 if id != "final_frame" else 86,42,0.4,0.14)
+		if id == "tidecaller":
+			_tone(sound,0.005,0.24,1460,330,0.16)
+			_tone(sound,0.03,0.19,820,220,0.10)
+		elif id == "final_frame":
+			_tone(sound,0.06,0.39,960,750,0.09)
+			_noise(sound,0.05,0.25,0.13,720)
+		else: _tone(sound,0.006,0.08,340,125,0.19,0.2)
+		_streams["shot_"+id] = _pcm(sound)
 	_render_progression_cues()
+
+func _render_movement() -> void:
+	# Heel impact, surface texture and equipment rustle are separate layers.
+	# Short tails keep steps legible without obscuring incoming attacks.
+	for id: String in ["step", "step_run", "step_soft", "step_grass", "step_interior"]:
+		var gain := 0.55 if id == "step_soft" else 1.2 if id == "step_run" else 0.85
+		var sound := _buffer(0.24)
+		_tone(sound, 0, 0.075, 132, 58, 0.22 * gain, 0.12)
+		_noise(sound, 0, 0.024, 0.15 * gain, 2300 if id == "step_interior" else 1200)
+		_noise(sound, 0.02, 0.12, 0.09 * gain, 4000 if id == "step_grass" else 2200)
+		_noise(sound, 0.075, 0.08, 0.04 * gain, 950)
+		if id == "step_interior": _tone(sound, 0.026, 0.13, 215, 155, 0.04)
+		_streams[id] = _pcm(sound)
+	for id: String in ["jump", "dive", "slide", "land", "land_heavy"]:
+		var sound := _buffer(0.55)
+		_noise(sound, 0, 0.10, 0.16, 1550)
+		_noise(sound, 0.045, 0.26 if id in ["dive", "slide"] else 0.13, 0.12, 700)
+		if id.begins_with("land"):
+			_tone(sound, 0, 0.18, 152, 44, 0.36 if id == "land_heavy" else 0.23, 0.1)
+			_noise(sound, 0.012, 0.04, 0.23, 2200)
+		else: _tone(sound, 0, 0.11, 116, 75, 0.09)
+		_streams[id] = _pcm(sound)
+	for id: String in ["mag_out", "mag_in", "chamber"]:
+		var sound := _buffer(0.23)
+		_noise(sound, 0, 0.022, 0.22, 3700)
+		_tone(sound, 0, 0.045, 420, 140, 0.12, 0.3)
+		_noise(sound, 0.018, 0.085, 0.09, 1600)
+		if id != "mag_out":
+			_noise(sound, 0.065, 0.024, 0.30, 2600)
+			_tone(sound, 0.07, 0.065, 205, 75, 0.20)
+		_streams[id] = _pcm(sound)
+	var explosion := _buffer(0.85)
+	_noise(explosion, 0, 0.085, 0.45, 1900)
+	_tone(explosion, 0, 0.44, 108, 32, 0.49, 0.12)
+	_noise(explosion, 0.02, 0.62, 0.24, 550)
+	_streams["explosion"] = _pcm(explosion)
+	var door := _buffer(1.1)
+	_noise(door, 0, 0.035, 0.27, 2900)
+	_tone(door, 0.04, 0.15, 195, 75, 0.25, 0.25)
+	_noise(door, 0.12, 0.5, 0.11, 900)
+	_notes(door, [57,64,69], 0.10, 0.5, 0.14)
+	_streams["door_unlock"] = _pcm(door)
+	var dropped := _buffer(0.35)
+	_noise(dropped, 0, 0.04, 0.25, 2500)
+	_tone(dropped, 0, 0.10, 260, 90, 0.19, 0.3)
+	_noise(dropped, 0.08, 0.07, 0.09, 1800)
+	_tone(dropped, 0.075, 0.14, 680, 560, 0.07)
+	_streams["weapon_drop"] = _pcm(dropped)
 
 
 func _render_music() -> AudioStreamWAV:
@@ -443,7 +506,7 @@ func _render_progression_cues() -> void:
 	for key: String in patterns:
 		var interface_cue := key in ["ui_hover", "ui_click"]
 		var spacing := 0.025 if interface_cue else 0.10
-		var duration := 0.06 if interface_cue else 0.64 if key in ["boss", "loot_mythic", "discovery"] else 0.36
+		var duration := 0.06 if interface_cue else 1.3 if key == "loot_mythic" else 0.9 if key == "loot_legendary" else 0.64 if key in ["boss", "discovery"] else 0.36
 		var seconds := maxf(0.12, (patterns[key].size() - 1) * spacing + duration + 0.02)
 		var samples := _buffer(seconds)
 		_notes(samples, patterns[key], spacing, duration, 0.08 if interface_cue else 0.20)
@@ -453,4 +516,11 @@ func _render_progression_cues() -> void:
 		if key == "boss":
 			_pad(samples, 0.0, seconds - 0.02, 43.65, 0.19)
 			_pad(samples, 0.0, seconds - 0.02, 46.25, 0.12)
+		if key in ["loot_legendary", "loot_mythic"]:
+			# Original glass-like upper partials and a delayed octave resolve.
+			for index: int in range(patterns[key].size()):
+				var hz := _midi_hz(int(patterns[key][index]))
+				_tone(samples, index * spacing, duration, hz * 2.01, hz * 2, 0.07)
+				_tone(samples, index * spacing + 0.075, duration * 0.7, hz * 3.98, hz * 4, 0.035)
+			_pad(samples, 0.14, seconds - 0.16, 110 if key == "loot_legendary" else 146.83, 0.06)
 		_streams[key] = _pcm(samples)

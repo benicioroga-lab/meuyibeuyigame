@@ -16,6 +16,15 @@ const Companion = preload("res://scripts/companion.gd")
 const Exploration = preload("res://scripts/exploration.gd")
 const UI = preload("res://scripts/game_ui.gd")
 const Audio = preload("res://scripts/game_audio.gd")
+const Equipment = preload("res://data/equipment_data.gd")
+const WeaponWheel = preload("res://scripts/weapon_wheel.gd")
+const Grenade = preload("res://scripts/thrown_grenade.gd")
+const Coop = preload("res://scripts/coop_session.gd")
+const CoopMenu = preload("res://scripts/coop_menu.gd")
+var coop: Node
+var coop_identity_path := "user://coop_identity.cfg"
+var weapon_wheel: Control
+var _grenade_ready_at := 0.0
 var inventory = Inventory.new()
 var progression = Progression.new()
 var director = Director.new()
@@ -96,6 +105,12 @@ func _ready() -> void:
 	ui = UI.new()
 	ui.setup(self)
 	add_child(ui)
+	coop = Coop.new()
+	coop.setup(self)
+	add_child(coop)
+	var coop_menu := CoopMenu.new()
+	coop_menu.game = self
+	add_child(coop_menu)
 	settings.apply(get_tree(), self)
 	audio.set_active(true)
 	ui.show_menu()
@@ -120,6 +135,7 @@ func _create_actors() -> void:
 
 func _setup_input() -> void:
 	var keys := {"move_forward":KEY_W,"move_back":KEY_S,"move_left":KEY_A,"move_right":KEY_D,"jump":KEY_SPACE,"sprint":KEY_SHIFT,"reload":KEY_R,"view_toggle":KEY_F1,"weapon_1":KEY_1,"weapon_2":KEY_2,"weapon_3":KEY_3,"shop":KEY_TAB,"pause_game":KEY_ESCAPE,"dog_mode":KEY_C,"interact":KEY_E,"inventory":KEY_I,"weapon_inspect":KEY_V,"flashlight":KEY_L}
+	keys.merge({"weapon_4":KEY_4, "weapon_wheel":KEY_T, "swap_loot":KEY_F, "grenade":KEY_G, "use_medkit":KEY_H, "use_ammo":KEY_J, "crouch":KEY_CTRL, "dive":KEY_Z})
 	for action: String in keys:
 		if not InputMap.has_action(action):
 			InputMap.add_action(action)
@@ -135,6 +151,9 @@ func _setup_input() -> void:
 
 func start_run(selected_difficulty: String, chaos: bool, slot: int = -1) -> void:
 	if running: return
+	if is_instance_valid(coop):
+		if coop.is_online(): coop.stop()
+		coop.records.clear()
 	if slot < 1:
 		for entry: Dictionary in save_manager.list_slots():
 			if not bool(entry.get("exists", false)):
@@ -173,6 +192,8 @@ func start_run(selected_difficulty: String, chaos: bool, slot: int = -1) -> void
 	schedule_save()
 
 func _clear_run() -> void:
+	_grenade_ready_at = 0
+	for grenade: Node in get_tree().get_nodes_in_group("run_grenades"): grenade.queue_free()
 	for enemy: Node in enemies:
 		if is_instance_valid(enemy):
 			remove_child(enemy)
@@ -192,6 +213,21 @@ func _clear_run() -> void:
 
 func _input(event: InputEvent) -> void:
 	if not running: return
+	if event.is_action_pressed("weapon_wheel") and not paused:
+		open_weapon_wheel()
+		get_viewport().set_input_as_handled()
+		return
+	if _menu_kind == "wheel":
+		if event.is_action_released("weapon_wheel"): close_weapon_wheel(true)
+		elif event.is_action_pressed("pause_game"): close_weapon_wheel(false)
+		get_viewport().set_input_as_handled()
+		return
+	if not paused:
+		if event.is_action_pressed("swap_loot"):
+			if not _coop_action("swap_ground_weapon"): exploration.swap_ground_weapon()
+		elif event.is_action_pressed("grenade"): use_supply("grenade")
+		elif event.is_action_pressed("use_medkit"): use_supply("medkit")
+		elif event.is_action_pressed("use_ammo"): use_supply("ammo")
 	if event.is_action_pressed("pause_game"):
 		if paused: resume_game()
 		else: pause_game()
@@ -201,13 +237,16 @@ func _input(event: InputEvent) -> void:
 		else: open_inventory("forge" if event.is_action_pressed("shop") else "inventory")
 		get_viewport().set_input_as_handled()
 	elif not paused and event.is_action_pressed("interact"):
-		exploration.interact()
+		if not _coop_action("interact"): exploration.interact()
 		get_viewport().set_input_as_handled()
 	elif not paused and event.is_action_pressed("dog_mode"):
-		companion.toggle_mode()
+		if not _coop_action("dog_mode"): companion.toggle_mode()
 		get_viewport().set_input_as_handled()
 
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and _menu_kind == "wheel":
+		close_weapon_wheel(false)
+		pause_game()
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and running and not paused: pause_game()
 	elif what == NOTIFICATION_WM_CLOSE_REQUEST: quit_game()
 
@@ -224,7 +263,7 @@ func _process(delta: float) -> void:
 			_menu_camera.position = world.menu_camera_position + Vector3(sin(Time.get_ticks_msec() * 0.00012) * 0.45, 0, 0)
 			_menu_camera.look_at(world.menu_look_at)
 		return
-	if paused: return
+	if simulation_paused() or (is_instance_valid(coop) and coop.is_client()): return
 	elapsed += delta
 	if _slow_remaining > 0:
 		_slow_remaining -= delta / maxf(0.1, Engine.time_scale)
@@ -266,7 +305,7 @@ func _director_action(action: Dictionary) -> void:
 			player.add_ammo(12)
 			audio.play("victory")
 			ui.announce("ROUND %02d COMPLETO" % round_number, "+%d petiscos · um respiro para explorar" % int(action.get("reward", 100)))
-			if not bool(settings.data.get("reduced_flashes", false)):
+			if not bool(settings.data.get("reduced_flashes", false)) and not coop.is_online():
 				Engine.time_scale = 0.42
 				_slow_remaining = 0.23
 			if round_number > int(profile.get("record", 0)):
@@ -296,6 +335,9 @@ func _spawn_enemy_data(data: Dictionary) -> Node3D:
 	var mods: Dictionary = director.get_modifiers()
 	enemy.configure_difficulty(float(Data.DIFFICULTIES[difficulty_id]["damage"]) * float(mods.get("enemy_damage", 1)), float(Data.DIFFICULTIES[difficulty_id]["speed"]) * float(mods.get("enemy_speed", 1)), chaos_active)
 	if elite: enemy.configure_elite(["fire","vampiric","frenzy"][rng.randi_range(0, 2)])
+	if is_instance_valid(coop) and coop.is_host():
+		enemy.health *= coop.health_multiplier()
+		enemy.max_health *= coop.health_multiplier()
 	enemy.process_mode = Node.PROCESS_MODE_PAUSABLE
 	enemy.set_meta("wave_enemy", bool(data.get("wave_enemy", true)))
 	add_child(enemy)
@@ -358,7 +400,7 @@ func on_enemy_killed(enemy: Node, reward: int, source: String = "player") -> voi
 	if _kill_chain in [3, 6, 10]: notify({3:"TRIPLA",6:"SEQUÊNCIA",10:"IMPARÁVEL"}[_kill_chain] + " · %d eliminações" % _kill_chain)
 	var boss: bool = str(enemy.get("kind")).begins_with("boss")
 	var elite: bool = not str(enemy.get("elite")).is_empty()
-	if source != "self" and (boss or elite or kills == 1 or rng.randf() < 0.27):
+	if source != "self" and (boss or kills == 1 or rng.randf() < (0.35 if elite else 0.10)):
 		var rarity := "legendary" if boss else ("rare" if elite else ("uncommon" if kills == 1 else ""))
 		exploration.drop_item("weapon", Loot.roll_weapon(round_number + (2 if boss else 0), rng, loot_quality(), rarity), enemy.global_position)
 	if rng.randf() < (0.55 if elite else 0.12): exploration.drop_item("attachment", Loot.roll_attachment(rng, loot_quality()), enemy.global_position + Vector3(0.45, 0, 0))
@@ -378,6 +420,7 @@ func on_enemy_killed(enemy: Node, reward: int, source: String = "player") -> voi
 		schedule_save()
 
 func on_shot(weapon: Dictionary, origin: Vector3, point: Vector3, hit_enemy: bool, headshot: bool) -> void:
+	if is_instance_valid(coop): coop.shot_feedback(weapon, origin, point, hit_enemy, headshot)
 	stats["shots"] = int(stats.get("shots", 0)) + 1
 	audio.play("shot", str(weapon.get("model_id", weapon.get("id", "biscuit"))))
 	if hit_enemy:
@@ -402,6 +445,7 @@ func on_shot(weapon: Dictionary, origin: Vector3, point: Vector3, hit_enemy: boo
 func on_dog_attack(_enemy: Node = null) -> void: audio.play("dog")
 func on_player_damaged(amount: float, source_world: Vector3 = Vector3.INF, absorbed: bool = false) -> void:
 	_last_damage = elapsed
+	if is_instance_valid(coop) and coop.damage_feedback(amount, source_world, absorbed): return
 	audio.play("shield" if absorbed else "hurt")
 	ui.show_damage(amount, _damage_direction(source_world), absorbed)
 
@@ -416,6 +460,9 @@ func _damage_direction(source_world: Vector3) -> Vector2:
 	return Vector2(offset.dot(basis.x), offset.dot(basis.z)).normalized()
 
 func on_player_died() -> void:
+	if is_instance_valid(coop) and coop.is_host():
+		coop.on_died()
+		return
 	if companion.try_revive():
 		ui.announce("FARO TE LEVANTOU", "Fique perto. Vocês ainda têm uma chance.")
 		return
@@ -425,12 +472,13 @@ func on_player_died() -> void:
 	_menu_kind = "dead"
 	Engine.time_scale = 1
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	get_tree().paused = true
-	_profile_store.save_slot(1, profile)
+	get_tree().paused = simulation_paused()
+	if not is_instance_valid(coop) or not coop.is_online() or coop.current_peer_id == 1: _profile_store.save_slot(1, profile)
 	ui.show_game_over(round_number, coins)
 
 func add_coins(amount: int, _source: String = "") -> void:
 	if amount <= 0: return
+	if is_instance_valid(coop) and _source in ["round", "event", "challenge"]: coop.reward_others(amount, _source)
 	coins += amount
 	stats["earned"] = int(stats.get("earned", 0)) + amount
 	_coins_gain = _coins_gain + amount if _gain_time > 0 else amount
@@ -445,6 +493,11 @@ func spend(amount: int) -> bool:
 
 func get_player_modifiers() -> Dictionary:
 	var result: Dictionary = progression.modifiers()
+	var bonuses: Dictionary = Equipment.MODULES[inventory.module_id].bonuses
+	for key: String in bonuses:
+		if key == "critical_chance": result["crit_chance"] = float(result.get("crit_chance", 0)) + float(bonuses[key])
+		elif key == "reload_time": result["reload"] = float(result.get("reload", 1)) / float(bonuses[key])
+		else: result[key] = float(result.get(key, 1)) * float(bonuses[key])
 	if active_powerups.has("double_damage"): result["damage"] *= 2
 	if active_powerups.has("frenzy"):
 		result["move_speed"] *= 1.22
@@ -470,8 +523,12 @@ func activate_powerup(id: String) -> void:
 func collect_nearby_drops(at: Vector3, radius: float) -> void: exploration.collect_nearby(at, radius)
 
 func buy_weapon(model_id: String) -> void:
+	if _coop_action("buy_weapon", [model_id]): return
 	if not running or not Data.WEAPONS.has(model_id): return
 	var model: Dictionary = Data.WEAPONS[model_id]
+	if bool(model.get("legendary_only", false)):
+		notify("Lendária exclusiva de loot e desafios")
+		return
 	if round_number < int(model["unlock_round"]):
 		notify("Disponível no round %d" % int(model["unlock_round"]))
 		return
@@ -490,17 +547,111 @@ func buy_weapon(model_id: String) -> void:
 	_purchase("Arma equipada")
 
 func equip_item(uid: String) -> void:
+	if _coop_action("equip_item", [uid]): return
+	player._save_ammo()
 	if not running or not inventory.equip(uid): return
 	player.sync_inventory()
 	_purchase("Equipado", false)
+
+func choose_dog_element(id: String) -> void:
+	if _coop_action("choose_dog_element", [id]): return
+	if companion.choose_element(id): _purchase("Afinidade do Faro alterada", false)
+
+func equip_to_slot(uid: String, slot: int) -> void:
+	if _coop_action("equip_to_slot", [uid, slot]): return
+	if not running: return
+	player._save_ammo()
+	if not inventory.assign_slot(uid, slot): return
+	player.sync_inventory()
+	_purchase("Arma no slot %d" % (slot + 1), false)
+
+func buy_equipment(kind: String, id: String) -> void:
+	if _coop_action("buy_equipment", [kind, id]): return
+	if not running or kind not in ["grenade", "module"]: return
+	var definitions: Dictionary = Equipment.GRENADES if kind == "grenade" else Equipment.MODULES
+	if not definitions.has(id): return
+	var owned: Array = inventory.owned_grenades if kind == "grenade" else inventory.owned_modules
+	if not owned.has(id):
+		if not spend(int(definitions[id].cost)): return
+		owned.append(id)
+	if kind == "grenade": inventory.grenade_id = id
+	else: inventory.module_id = id
+	_purchase("%s equipado" % definitions[id].name)
+
+func buy_supply(id: String) -> void:
+	if _coop_action("buy_supply", [id]): return
+	if not running or not Equipment.SUPPLIES.has(id): return
+	var config: Dictionary = Equipment.SUPPLIES[id]
+	if int(inventory.supplies[id]) >= int(config.max): return
+	if not spend(int(config.cost)): return
+	inventory.supplies[id] += 1
+	_purchase("+1 " + config.name)
+
+func use_supply(id: String) -> bool:
+	if _coop_action("use_supply", [id]): return true
+	if not running or paused or player.health <= 0 or not Equipment.SUPPLIES.has(id): return false
+	if int(inventory.supplies[id]) <= 0:
+		notify("Sem cargas · reabasteça em I / UTILITÁRIOS")
+		return false
+	if id == "medkit":
+		if player.health >= player.max_health: return false
+		player.health = minf(player.max_health, player.health + player.max_health * 0.45)
+	elif id == "ammo":
+		var weapon: Dictionary = player.get_weapon_stats()
+		if player.reserve >= int(weapon.max_reserve): return false
+		player.add_ammo(int(weapon.magazine_size) * 2)
+	else:
+		if elapsed < _grenade_ready_at: return false
+		_grenade_ready_at = elapsed + 1.4
+		var grenade := Grenade.new()
+		grenade.game = self
+		if is_instance_valid(coop): grenade.owner_peer_id = coop.current_peer_id
+		grenade.config = Equipment.GRENADES[inventory.grenade_id]
+		grenade.velocity = -player.camera.global_basis.z * 15 + Vector3.UP * 3
+		add_child(grenade)
+		grenade.global_position = player.camera.global_position - player.camera.global_basis.z * 0.25
+	inventory.supplies[id] -= 1
+	audio.play("purchase" if id != "grenade" else "reload")
+	notify(Equipment.SUPPLIES[id].name + " · " + str(inventory.supplies[id]) + " restantes")
+	schedule_save()
+	return true
+
+func open_weapon_wheel() -> void:
+	if not is_instance_valid(weapon_wheel):
+		weapon_wheel = WeaponWheel.new()
+		ui.root.add_child(weapon_wheel)
+	player._save_ammo()
+	paused = true
+	_menu_kind = "wheel"
+	ui.hud.hide()
+	ui.notice_time = 0
+	ui.labels.notice.text = ""
+	get_tree().paused = simulation_paused()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	weapon_wheel.open(self)
+
+func close_weapon_wheel(commit: bool) -> void:
+	if not is_instance_valid(weapon_wheel): return
+	if commit and _coop_action("select_slot", [weapon_wheel.selected]):
+		weapon_wheel.hide()
+		resume_game()
+		return
+	if commit and inventory.select_slot(weapon_wheel.selected):
+		player.sync_inventory()
+		schedule_save()
+	weapon_wheel.hide()
+	resume_game()
 func auto_equip() -> void:
+	if _coop_action("auto_equip", []): return
 	if inventory.auto_equip():
 		player.sync_inventory()
 		_purchase("Melhor DPS sustentado equipado", false)
 func set_item_flag(uid: String, flag: String) -> void:
+	if _coop_action("set_item_flag", [uid, flag]): return
 	var item: Dictionary = inventory.find_item(uid)
 	if not item.is_empty() and inventory.set_flag(uid, flag, not bool(item.get(flag, false))): _purchase("Marcado", false)
 func discard_item(uid: String) -> void:
+	if _coop_action("discard_item", [uid]): return
 	var item: Dictionary = inventory.find_item(uid)
 	if item.is_empty(): return
 	if not exploration.can_accept_drop("weapon", item):
@@ -517,6 +668,7 @@ func discard_item(uid: String) -> void:
 		return
 	_purchase("Item no chão", false)
 func sell_item(uid: String) -> void:
+	if _coop_action("sell_item", [uid]): return
 	var item: Dictionary = inventory.find_item(uid)
 	if item.is_empty(): return
 	var value := int(inventory.stats(item).get("value", 0))
@@ -526,20 +678,24 @@ func sell_item(uid: String) -> void:
 	add_coins(value, "sale")
 	_purchase("+%d petiscos" % value, false)
 func salvage_item(uid: String) -> void:
+	if _coop_action("salvage_item", [uid]): return
 	if inventory.remove(uid, "dismantle").is_empty():
 		notify("Favoritos e arma equipada estão protegidos")
 		return
 	_purchase("Materiais recuperados", false)
 func install_attachment(uid: String, attachment_uid: String) -> void:
+	if _coop_action("install_attachment", [uid, attachment_uid]): return
 	if inventory.install(uid, attachment_uid):
 		player.sync_inventory()
 		_purchase("Peça instalada", false)
 		audio.play("attachment")
 func uninstall_attachment(uid: String, slot: String) -> void:
+	if _coop_action("uninstall_attachment", [uid, slot]): return
 	if inventory.uninstall(uid, slot):
 		player.sync_inventory()
 		_purchase("Peça guardada", false)
 func buy_attachment(id: String) -> void:
+	if _coop_action("buy_attachment", [id]): return
 	if not Loot.ATTACHMENTS.has(id): return
 	var config: Dictionary = Loot.ATTACHMENTS[id]
 	var cost: int = int(config.get("cost", 150))
@@ -550,6 +706,7 @@ func buy_attachment(id: String) -> void:
 		return
 	_purchase("Peça na mochila")
 func upgrade_weapon(uid: String = "") -> void:
+	if _coop_action("upgrade_weapon", [uid]): return
 	if uid.is_empty(): uid = inventory.equipped_id
 	var item: Dictionary = inventory.find_item(uid)
 	if item.is_empty(): return
@@ -561,6 +718,7 @@ func upgrade_weapon(uid: String = "") -> void:
 	player.sync_inventory()
 	_purchase("Refinamento %d · sem limite de níveis" % int(item["upgrade_level"]))
 func reroll_weapon(uid: String, kind: String) -> void:
+	if _coop_action("reroll_weapon", [uid, kind]): return
 	var cost: int = inventory.reroll_cost(uid, kind)
 	if cost <= 0 or not spend(cost): return
 	if not inventory.reroll(uid, kind, rng):
@@ -569,6 +727,7 @@ func reroll_weapon(uid: String, kind: String) -> void:
 	player.sync_inventory()
 	_purchase("Nova combinação")
 func buy_perk(id: String) -> void:
+	if _coop_action("buy_perk", [id]): return
 	var cost: int = progression.cost(id)
 	if cost <= 0 or not spend(cost): return
 	progression.increment(id)
@@ -578,10 +737,13 @@ func buy_perk(id: String) -> void:
 	player.sync_inventory()
 	_purchase(str(Progression.PERKS[id]["name"]) + " evoluiu")
 func upgrade_dog(branch: String = "attack") -> void:
+	if _coop_action("upgrade_dog", [branch]): return
 	if companion.upgrade_branch(branch): _purchase("Faro evoluiu", false)
 func select_dog(id: String) -> void:
+	if _coop_action("select_dog", [id]): return
 	if companion.switch_archetype(id): _purchase("Companhia pronta", false)
 func refill_ammo() -> void:
+	if _coop_action("refill_ammo", []): return
 	if player.refill(): _purchase("Munição pronta", false)
 func _purchase(message: String, counted: bool = true) -> void:
 	if counted: stats["purchases"] = int(stats.get("purchases", 0)) + 1
@@ -594,6 +756,7 @@ func _purchase(message: String, counted: bool = true) -> void:
 func get_progression_data() -> Dictionary:
 	var stock: Array = []
 	for id: String in Data.WEAPONS:
+		if bool(Data.WEAPONS[id].get("legendary_only", false)): continue
 		var row: Dictionary = Data.WEAPONS[id].duplicate()
 		row["model_id"] = id
 		row["price"] = maxi(80, int(row["price"])) + (round_number - 1) * 22
@@ -624,13 +787,13 @@ func award_profile(id: String, amount: int) -> void:
 	while profile["awarded"].size() > 2048: profile["awarded"].pop_front()
 	profile["sigils"] = int(profile.get("sigils", 0)) + amount
 	if not profile["achievements"].has(id): profile["achievements"].append(id)
-	_profile_store.save_slot(1, profile)
+	if not is_instance_valid(coop) or not coop.is_online() or coop.current_peer_id == 1: _profile_store.save_slot(1, profile)
 func unlock_meta(id: String) -> void:
 	var costs := {"collector":3,"support":5,"guardian":7}
 	if not costs.has(id) or profile["unlocks"].has(id) or int(profile["sigils"]) < int(costs[id]): return
 	profile["sigils"] = int(profile["sigils"]) - int(costs[id])
 	profile["unlocks"].append(id)
-	_profile_store.save_slot(1, profile)
+	if not is_instance_valid(coop) or not coop.is_online() or coop.current_peer_id == 1: _profile_store.save_slot(1, profile)
 	notify("Especialização de companheiro desbloqueada")
 func get_extras() -> Dictionary:
 	var result: Dictionary = profile.duplicate(true)
@@ -644,15 +807,16 @@ func pause_game() -> void:
 	_menu_kind = "pause"
 	Engine.time_scale = 1
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	get_tree().paused = true
+	get_tree().paused = simulation_paused()
 	ui.show_pause()
 func open_inventory(tab: String = "inventory") -> void:
 	if not running: return
+	if is_instance_valid(coop) and coop.open_remote_inventory(tab): return
 	paused = true
 	_menu_kind = "inventory"
 	Engine.time_scale = 1
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	get_tree().paused = true
+	get_tree().paused = simulation_paused()
 	ui.show_inventory(tab)
 func open_shop() -> void: open_inventory("forge")
 func resume_game() -> void:
@@ -666,9 +830,13 @@ func resume_game() -> void:
 	audio.set_active(true)
 	if _save_pending: save_game()
 func return_to_menu() -> bool:
+	if is_instance_valid(coop) and coop.is_client():
+		coop.stop("Você saiu. Seu progresso ficou salvo no host.")
+		return true
 	if running and not save_game():
 		pause_game()
 		return false
+	if is_instance_valid(coop) and coop.is_host(): coop.stop("Host encerrou a sessão")
 	running = false
 	paused = true
 	get_tree().paused = false
@@ -696,6 +864,7 @@ func quit_game() -> void:
 	await audio.shutdown()
 	get_tree().quit()
 func notify(message: String) -> void:
+	if is_instance_valid(coop) and coop.notice(message): return
 	if is_instance_valid(ui): ui.show_notice(message)
 func ui_feedback(cue: String = "ui_click") -> void:
 	if is_instance_valid(audio): audio.play(cue)
@@ -714,6 +883,7 @@ func apply_graphics_preset(id: String) -> void:
 		settings.apply(get_tree(), self)
 		if not settings.save_settings(): notify(settings.last_error)
 func schedule_save() -> void:
+	if is_instance_valid(coop) and coop.is_client(): return
 	if _restoring or not running: return
 	if not _save_pending: _save_delay = 0.7
 	_save_pending = true
@@ -727,8 +897,11 @@ func snapshot_state() -> Dictionary:
 			state["wave_enemy"] = bool(enemy.get_meta("wave_enemy", true))
 			state["boss_zone_id"] = str(enemy.get_meta("boss_zone_id", ""))
 			living.append(state)
-	return {"round_number":round_number,"coins":coins,"elapsed":elapsed,"kills":kills,"difficulty":difficulty_id,"chaos":chaos_active,"run_seed":str(run_seed),"rng_state":str(rng.state),"inventory":inventory.export_state(),"player":player_state,"perks":progression.export_state(),"dog":companion.export_state(),"world":world.export_state(),"director":director.export_state(),"exploration":exploration.export_state(),"enemies":living,"stats":stats.duplicate(true),"powerups":active_powerups.duplicate(true),"boss_zone":boss_zone.duplicate(true)}
+	return {"round_number":round_number,"coins":coins,"elapsed":elapsed,"kills":kills,"difficulty":difficulty_id,"chaos":chaos_active,"run_seed":str(run_seed),"rng_state":str(rng.state),"inventory":inventory.export_state(),"player":player_state,"perks":progression.export_state(),"dog":companion.export_state(),"world":world.export_state(),"director":director.export_state(),"exploration":exploration.export_state(),"enemies":living,"stats":stats.duplicate(true),"powerups":active_powerups.duplicate(true),"boss_zone":boss_zone.duplicate(true),"coop":coop.export_state() if is_instance_valid(coop) else {}}
 func save_game(slot: int = -1) -> bool:
+	if is_instance_valid(coop) and coop.is_client():
+		notify("O host salva sua progressão automaticamente")
+		return true
 	if not running or player.health <= 0: return false
 	if slot < 1: slot = active_slot
 	if slot < 1 or slot > 3: return false
@@ -742,13 +915,14 @@ func save_game(slot: int = -1) -> bool:
 	active_slot = slot
 	_save_pending = false
 	_saved_time = 1.8
-	_profile_store.save_slot(1, profile)
+	if not is_instance_valid(coop) or not coop.is_online() or coop.current_peer_id == 1: _profile_store.save_slot(1, profile)
 	return true
 func get_save_slots() -> Array: return save_manager.list_slots()
 func continue_game() -> void:
 	var slot: int = save_manager.latest_slot()
 	if slot > 0: load_game(slot)
 func load_game(slot: int) -> void:
+	if is_instance_valid(coop) and coop.is_online(): coop.stop()
 	var result: Dictionary = save_manager.load_slot(slot)
 	if not bool(result.get("ok", false)):
 		notify(str(result.get("error", "Save indisponível")))
@@ -795,6 +969,7 @@ func apply_snapshot(state: Dictionary) -> bool:
 		enemy.import_state(entry)
 		enemy.set_meta("boss_zone_id", str(entry.get("boss_zone_id", "")))
 	exploration.import_state(state.get("exploration", {}))
+	if is_instance_valid(coop): coop.import_state(state.get("coop", {}))
 	world.set_event(str(director.active_event.get("id", "")))
 	player.camera.make_current()
 	running = true
@@ -805,6 +980,26 @@ func apply_snapshot(state: Dictionary) -> bool:
 
 func _valid_snapshot(state: Dictionary) -> bool:
 	if not SnapshotValidator.valid(state): return false
+	if state.has("coop"):
+		var network: Variant = state.coop
+		if not network is Dictionary or not network.get("players", {}) is Dictionary or network.get("players", {}).size() > 64: return false
+		var multiplier: Variant = network.get("enemy_multiplier", 1.0)
+		if not (multiplier is float or multiplier is int) or not is_finite(float(multiplier)) or float(multiplier) < 1 or float(multiplier) > 3.40001: return false
+		for token: Variant in network.get("players", {}):
+			if not token is String or str(token).length() != 64 or not str(token).is_valid_hex_number(false): return false
+			var personal: Variant = network.players[token]
+			if not personal is Dictionary: return false
+			for key: String in ["inventory", "perks", "player", "dog", "stats", "profile", "powerups"]:
+				if not personal.get(key) is Dictionary: return false
+			var health: Variant = personal.player.get("health")
+			if not (health is float or health is int) or not is_finite(float(health)) or float(health) < 0: return false
+			var candidate: Dictionary = state.duplicate(true)
+			candidate.erase("coop")
+			for key: String in ["inventory", "perks", "player", "dog", "stats", "powerups", "coins"]: candidate[key] = personal.get(key)
+			candidate.player = candidate.player.duplicate(true)
+			# A disconnected guest may be downed; validate the remaining snapshot normally.
+			candidate.player.health = maxf(1.0, float(health))
+			if not SnapshotValidator.valid(candidate): return false
 	for key: String in ["inventory","director","player","perks","dog","world","exploration","stats","powerups","boss_zone"]:
 		if not state.get(key) is Dictionary: return false
 	if not Data.DIFFICULTIES.has(str(state.get("difficulty", ""))): return false
@@ -848,9 +1043,10 @@ func _update_hud() -> void:
 			boss = enemy
 			break
 	var boss_name: String = str(EnemyData.BOSSES.get(boss.boss_id, EnemyData.BOSSES["captain"])["name"]) if is_instance_valid(boss) else ""
-	var objective := "Explore o Mercado · E interagir · L lanterna" if not exploration.discovered.has("mercado") else ""
+	var objective := "Explore o Mercado · E interagir · L lanterna" if round_number == 1 and world.get_region_id(player.global_position) in ["patio", "mercado"] and not exploration.discovered.has("mercado") else ""
 	if not exploration.challenge.is_empty(): objective = "%s · %d/%d · %ds" % [exploration.challenge["name"],exploration.challenge["kills"],exploration.challenge["target"],ceili(exploration.challenge["remaining"])]
 	ui.update_hud({
+		"supplies":inventory.supplies,
 		"round":round_number,"remaining":maxi(0, wave_total - wave_killed),"phase":phase,
 		"coins":coins,"coins_gain":_coins_gain if _gain_time > 0 else 0,
 		"health":player.health,"max_health":player.max_health,
@@ -909,3 +1105,9 @@ func _track_effect(effect: Node3D, lifetime: float) -> void:
 		if is_instance_valid(effect):
 			_effects.erase(effect)
 			effect.queue_free())
+
+func simulation_paused() -> bool:
+	return paused and not (is_instance_valid(coop) and coop.is_online())
+
+func _coop_action(action: String, args: Array = []) -> bool:
+	return is_instance_valid(coop) and coop.request_action(action, args)

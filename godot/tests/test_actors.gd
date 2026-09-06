@@ -402,7 +402,7 @@ func expanded_dog(game: DummyGame, dog: CharacterBody3D) -> void:
 	check(clone.levels == dog.levels and clone.archetype == dog.archetype and is_equal_approx(clone.damage, dog.damage), "dog progression survives JSON save roundtrip")
 	check(clone._revive_cooldown > 60.0 and clone.owned_archetypes.has("collector"), "save retains rescue cooldown and unlocked variants")
 	var progress: Dictionary = clone.get_progression()
-	check(progress["branches"].size() == 4 and progress["archetypes"].size() == 4 and progress["branches"][0]["next_value"] > progress["branches"][0]["value"], "shop progression has actual comparisons and all choices")
+	check(progress["branches"].size() == 8 and progress["archetypes"].size() == 4 and progress["branches"][0]["next_value"] > progress["branches"][0]["value"], "shop progression exposes all eight paths with current/next comparison and four specialties")
 	check(is_instance_valid(clone._gear) and clone._gear.get_child_count() > 2, "progression creates visible dog equipment")
 	clone.queue_free()
 	await process_frame
