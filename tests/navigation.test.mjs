@@ -18,3 +18,18 @@ test('movement distance is bounded by configured speed even with a large simulat
   const nav=new Navigation([]),entity={g:new THREE.Group(),seed:0},target=new THREE.Vector3(30,0,30);
   const before=entity.g.position.clone();nav.move(entity,target,4,.5,.4);assert.ok(entity.g.position.distanceTo(before)<=2.00001);
 });
+
+test('frame budget staggers blocked-route searches while preserving direct movement',()=>{
+  const nav=new Navigation([{x:0,z:5,width:7,depth:2,height:6}]),a={g:new THREE.Group(),seed:0},b={g:new THREE.Group(),seed:1},direct={g:new THREE.Group(),seed:2},target=new THREE.Vector3(0,0,12);
+  b.g.position.x=1;direct.g.position.x=15;nav.beginFrame();nav.move(a,target,3,1/60,.4);nav.move(b,target,3,1/60,.4);nav.move(direct,new THREE.Vector3(15,0,12),3,1/60,.4);
+  assert.ok(a.path?.length);assert.equal(b.path,undefined);assert.ok(direct.g.position.z>0);assert.equal(nav.replansThisFrame,1);
+  nav.beginFrame();nav.move(b,target,3,1/60,.4);assert.ok(b.path?.length);
+});
+
+test('stable goals reuse routes and moved endpoints keep collision-safe cached corners',()=>{
+  const nav=new Navigation([{x:0,z:5,width:7,depth:2,height:6}]),start=new THREE.Vector3(),target=new THREE.Vector3(0,0,12);
+  const original=nav.path(start,target,.4),again=nav.path(start,new THREE.Vector3(.8,0,12),.4);assert.ok(nav.routes.size>0);
+  let prior=start;for(const point of again){assert.equal(nav.clearLine(prior,point,.4),true);prior=point;}assert.ok(prior.distanceTo(new THREE.Vector3(.8,0,12))<.001);
+  original[0].set(200,0,200);const safe=nav.path(start,target,.4);assert.ok(safe[0].x<10,'entity path must not mutate shared cache');
+  const entity={g:new THREE.Group(),seed:0};nav.move(entity,target,0,1/60,.4);const path=entity.path;for(let i=0;i<180;i++)nav.move(entity,target,0,1/60,.4);assert.equal(entity.path,path,'no search every second for a stationary goal');
+});

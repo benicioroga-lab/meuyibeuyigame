@@ -13,9 +13,9 @@ test('every weapon has finite ammunition and its own cadence and reload duration
       gun.tick(1/config.fireRate);
     }
     assert.equal(gun.current.magazine,0);assert.equal(gun.fire(),null);
-    assert.ok(gun.reloadState);assert.equal(gun.reloadState.total,config.reloadTime);
-    const before=gun.current.reserve;gun.tick(config.reloadTime/2);assert.equal(gun.fire(),null);assert.equal(gun.current.reserve,before);
-    gun.tick(config.reloadTime/2+.001);
+    assert.ok(gun.reloadState);assert.equal(gun.reloadState.kind,'empty');assert.equal(gun.reloadState.total,gun.stats().emptyReloadTime);
+    const duration=gun.reloadState.total,before=gun.current.reserve;gun.tick(duration/2);assert.equal(gun.fire(),null);assert.equal(gun.current.reserve,before);
+    gun.tick(duration/2+.001);
     assert.equal(gun.current.magazine,config.magazineSize);
     assert.equal(gun.current.magazine+gun.current.reserve,original-config.magazineSize);
   }

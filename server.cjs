@@ -11,8 +11,10 @@ const routes = new Map([
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/experience.js', ['experience.js', 'text/javascript; charset=utf-8']],
 ]);
-for (const name of ['minimap','audio','config','arsenal','navigation','enemies','hit-detection','combat-effects','combat','dog','shop','world-detail']) {
-  routes.set('/systems/'+name+'.js', ['systems/'+name+'.js','text/javascript; charset=utf-8']);
+// Only flat game modules/styles are public. Configuration, tests and .git stay private.
+function systemRoute(pathname) {
+  return /^\/systems\/[a-z0-9-]+\.(js|css)$/.test(pathname)
+    ? [pathname.slice(1),pathname.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8'] : null;
 }
 const assetTypes = new Map([
   ['.fbx', 'application/octet-stream'],
@@ -25,7 +27,13 @@ const assetTypes = new Map([
   ['.mp3', 'audio/mpeg'],
 ]);
 const clients = new Set();
-const reloadScript = '<script>const previewUpdates = new EventSource("/__updates"); previewUpdates.addEventListener("refresh", () => location.reload());</script>';
+const reloadScript = `<script>const previewUpdates = new EventSource('/__updates'); previewUpdates.addEventListener('refresh', () => {
+  if (!document.querySelector('#startScreen')?.hidden) { location.reload(); return; }
+  if (document.getElementById('previewRefresh')) return;
+  const update = document.createElement('button'); update.id = 'previewRefresh'; update.textContent = 'Atualização pronta · reiniciar para aplicar';
+  update.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:150;background:#eac47b;color:#202c2e;border:0;border-radius:4px;padding:9px 14px;font:600 11px sans-serif;cursor:pointer';
+  update.onclick = () => location.reload(); document.body.append(update);
+});</script>`;
 
 const server = http.createServer((req, res) => {
   if (!['GET', 'HEAD'].includes(req.method)) {
@@ -62,7 +70,7 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  const route = routes.get(pathname);
+  const route = routes.get(pathname) || systemRoute(pathname);
   if (!route) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('Not found');
@@ -87,7 +95,7 @@ const watcher = fs.watch(__dirname, (event, filename) => {
   if (!['index.html', 'styles.css', 'app.js', 'experience.js'].includes(String(filename))) return;
   refreshPreview();
 });
-const systemWatcher=fs.watch(path.join(__dirname,'systems'),(event,filename)=>{if(String(filename).endsWith('.js'))refreshPreview();});
+const systemWatcher=fs.watch(path.join(__dirname,'systems'),(event,filename)=>{if(/\.(js|css)$/.test(String(filename)))refreshPreview();});
 server.on('error', (error) => {
   console.error(`Meyui Beuyi could not start: ${error.message}`);
   watcher.close();

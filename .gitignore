@@ -1,2 +1,5 @@
 .preview-*.log
 node_modules/
+godot/.godot/
+godot/builds/
+godot/test-output/

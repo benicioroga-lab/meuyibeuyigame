@@ -9,6 +9,7 @@ export function normalizeSettings(value = {}) {
     cameraDistance: number('cameraDistance', 6.5, 4, 10),
     invertY: value.invertY === true,
     reduceMotion: value.reduceMotion === true,
+    damageNumbers: value.damageNumbers !== false,
   };
 }
 
@@ -20,7 +21,7 @@ export function createExperience(game) {
   const $ = id => document.getElementById(id);
   const shell = document.querySelector('.game-shell');
   const canvas = $('game');
-  const modalIds = ['pauseScreen', 'settingsScreen', 'helpScreen', 'upgradeDrawer', 'missionDrawer', 'mapDrawer', 'gameOverScreen'];
+  const modalIds = ['pauseScreen', 'settingsScreen', 'helpScreen', 'upgradeDrawer', 'missionDrawer', 'mapDrawer', 'gameOverScreen','metaScreen','buildScreen'];
   const iconIds = {speed:'bolt',jump:'up',dash:'bolt',force:'wave',ammo:'spark',range:'target',crit:'target',bark:'wave',armor:'shield',regen:'heart',magnet:'bone',luck:'spark',dig:'paw',secret:'compass',pack:'paw',pupPower:'wave',elemental:'spark'};
   const groupColors = {'MOVIMENTO':'#e2bf77','COMBATE':'#e39c86','DEFESA':'#9dcabc','EXPLORAÇÃO':'#a5bdda','GANGUE':'#c4a6d9'};
   const purchased = new Set();
@@ -67,14 +68,14 @@ export function createExperience(game) {
     try { const pending = canvas.requestPointerLock(); pending?.catch(lockFallback); } catch { lockFallback(); }
   }
   function focusModal(id) {
-    const focusable = $(id).querySelector('button:not(:disabled),input');
+    const focusable = $(id).querySelector('button:not(:disabled),input,select:not(:disabled)');
     focusable?.focus({ preventScroll: true });
   }
   function showModal(id, returnTo = null) {
     if (ended && id !== 'gameOverScreen') return;
     previousFocus = document.activeElement;
     modalReturn = returnTo;
-    modalIds.forEach(name => $(name).hidden = name !== id);
+    modalIds.forEach(name => {if($(name))$(name).hidden = name !== id;});
     currentModal = id;
     state.paused = true;
     displayedCoins = state.coins;
@@ -95,9 +96,10 @@ export function createExperience(game) {
   }
   function closeModal() {
     if (ended) return;
+    if(currentModal==='buildScreen'&&game.getDirector?.()?.phase==='choice')return;
     if (modalReturn) { const target = modalReturn; modalReturn = null; showModal(target); return; }
     if (hasStarted && ui.startScreen.hidden) { resume(); return; }
-    modalIds.forEach(id => $(id).hidden = true);
+    modalIds.forEach(id => {if($(id))$(id).hidden = true;});
     currentModal = null;
     shell.classList.remove('modal-open');
     $('startScreen').inert = false;
@@ -110,7 +112,8 @@ export function createExperience(game) {
   }
   function resume() {
     if (ended) return;
-    modalIds.forEach(id => $(id).hidden = true);
+    if(game.getDirector?.()?.phase==='choice'){showModal('buildScreen');return;}
+    modalIds.forEach(id => {if($(id))$(id).hidden = true;});
     ui.startScreen.hidden = true;
     ui.startScreen.inert = false;
     $('gameHud').hidden = false;
@@ -127,19 +130,21 @@ export function createExperience(game) {
       hasStarted = true; cameraReady = false;
       player.cameraYaw = 0; player.cameraPitch = -.045;
       player.damageCooldown = 3;
+      game.startRun?.();
       startMusic();
-      announce('BEM-VINDO AO CALÇADÃO', 'SIGA SEU FARO', 'Pegue petiscos. Prepare-se para o primeiro round.');
+      announce('BEM-VINDO AO MORRO DO VENTO', 'SIGA SEU FARO', 'Abra o primeiro baú. F para interagir; Tab para evoluir.');
     }
     resume();
   }
   function mainMenu() {
     releaseMouse(); state.paused = true;
-    modalIds.forEach(id => $(id).hidden = true);
+    modalIds.forEach(id => {if($(id))$(id).hidden = true;});
     currentModal = modalReturn = null;
     ui.startScreen.hidden = false; ui.startScreen.inert = false;
     $('gameHud').hidden = true;
     shell.classList.remove('playing', 'modal-open'); shell.classList.add('menu-open');
     $('startButtonLabel').textContent = 'CONTINUAR AVENTURA';
+    game.onMenu?.();
     $('startButton').focus(); pauseMusic();
   }
   function openDrawer(id) { if (!hasStarted || ended) return; showModal(id); }
@@ -155,6 +160,7 @@ export function createExperience(game) {
     }
     $('invertY').checked = settings.invertY;
     $('reduceMotion').checked = settings.reduceMotion;
+    if($('damageNumbersSetting'))$('damageNumbersSetting').checked=settings.damageNumbers;
     shell.classList.toggle('reduce-motion', settings.reduceMotion);
     setVolume(settings.volume / 100);
     game.setAudioMix?.(settings.musicVolume/100,settings.effectsVolume/100);
@@ -163,6 +169,7 @@ export function createExperience(game) {
   function bind() {
     updateSettings();
     $('startButton').onclick = start;
+    $('damageNumbersSetting')?.addEventListener('input',()=>{settings.damageNumbers=$('damageNumbersSetting').checked;updateSettings(true);});
     $('resumeButton').onclick = resume;
     $('pauseButton').onclick = () => pause();
     $('mainMenuButton').onclick = mainMenu;
@@ -195,7 +202,7 @@ export function createExperience(game) {
     addEventListener('resize', game.resize);
     addEventListener('keydown', e => {
       if (e.code === 'Tab' && currentModal) {
-        const nodes = [...$(currentModal).querySelectorAll('button:not(:disabled),input')].filter(node => node.getClientRects().length);
+        const nodes = [...$(currentModal).querySelectorAll('button:not(:disabled),input,select:not(:disabled)')].filter(node => node.getClientRects().length);
         if (!nodes.length) return;
         if (e.shiftKey && document.activeElement === nodes[0]) { e.preventDefault(); nodes.at(-1).focus(); }
         else if (!e.shiftKey && document.activeElement === nodes.at(-1)) { e.preventDefault(); nodes[0].focus(); }
@@ -213,11 +220,11 @@ export function createExperience(game) {
       if (['F1','Space','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
       keys[e.code] = true;
       if (e.repeat) return;
-      const actions = { KeyR:()=>game.getCombat()?.reload(), KeyC:()=>game.getDog()?.command(), KeyE:bark, KeyQ:sniff, KeyF:dig, KeyG:formPack, Space:jump, ShiftLeft:dash, ShiftRight:dash,
+      const actions = { KeyR:()=>game.getCombat()?.reload(), KeyC:()=>game.getDog()?.command(), KeyE:bark, KeyQ:sniff, KeyF:dig, KeyG:formPack, KeyV:()=>game.getCombat()?.inspect(), KeyI:()=>game.openInventory?.(), Space:jump, ShiftLeft:dash, ShiftRight:dash,
         F1:()=>{player.thirdPerson=!player.thirdPerson;cameraReady=false;canvas.dataset.perspective=player.thirdPerson?'third':'first';showToast(player.thirdPerson?'Terceira pessoa · F1 para voltar':'Primeira pessoa · F1 para alternar');},
         Tab:() => openDrawer('upgradeDrawer'), KeyU:() => openDrawer('upgradeDrawer'), KeyM:() => openDrawer('mapDrawer'), KeyJ:() => openDrawer('missionDrawer'), KeyH:() => showModal('helpScreen') };
       actions[e.code]?.();
-      if(/^Digit[1-7]$/.test(e.code))game.getCombat()?.arsenal.equip(['biscuit','boardwalk','hammer','popcorn','ember','voltage','zero'][Number(e.code.at(-1))-1]);
+      if(/^Digit[1-7]$/.test(e.code)){const arsenal=game.getCombat()?.arsenal;arsenal?.equip([...arsenal.inventory.keys()][Number(e.code.at(-1))-1]);}
     });
     addEventListener('keyup', e => keys[e.code] = false);
     canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -286,8 +293,8 @@ export function createExperience(game) {
     stick.addEventListener('pointermove', moveStick);
     for (const event of ['pointerup','pointercancel','lostpointercapture']) stick.addEventListener(event, () => { stickPointer=null; keys.touchX=keys.touchY=0; knob.style.transform=''; });
     $('startButton').disabled = false;
-    $('startButtonLabel').textContent = 'COMEÇAR A AVENTURA';
-    $('loadingStatus').textContent = 'Tudo pronto. Seu calçadão está esperando.';
+    $('startButtonLabel').textContent = 'ENTRAR NO MORRO';
+    $('loadingStatus').textContent = 'Tudo pronto. Só mais um round.';
     renderPerks();
   }
 
@@ -317,7 +324,8 @@ export function createExperience(game) {
     camera.position.copy(cameraPosition);
     if(!settings.reduceMotion){const shake=game.getCombat()?.effects.shake||0;camera.position.x+=Math.sin(state.time*97)*shake;camera.position.y+=Math.cos(state.time*83)*shake*.6;}
     camera.lookAt(camera.position.clone().add(aimDirection));
-    const fov=THREE.MathUtils.lerp(camera.fov,player.aiming?52:player.dash>0&&!settings.reduceMotion?72:66,blend);
+    const zoom=game.getCombat()?.arsenal.stats()?.zoom||1;
+    const fov=THREE.MathUtils.lerp(camera.fov,player.aiming?Math.max(24,52/zoom):player.dash>0&&!settings.reduceMotion?72:66,blend);
     if(Math.abs(camera.fov-fov)>.001){camera.fov=fov;camera.updateProjectionMatrix();}
     dog.visible=Boolean(player.thirdPerson);
     barkView.visible=false;
@@ -354,6 +362,7 @@ export function createExperience(game) {
   function renderPerks() {
     const items=upgrades.filter(u=>purchased.has(u.id)&&state.upgrades[u.id]>0).map(u=>({...u,level:state.upgrades[u.id],color:groupColors[u.group]}));
     const arsenal=game.getCombat()?.arsenal,training=game.getDog()?.training;
+    for(const perk of game.getDirector?.()?.getHUD().perks||[])items.unshift({id:'build-'+perk.id,title:perk.name,symbol:'spark',level:perk.level,color:'#c4b0e4'});
     if(arsenal)for(const [id,level] of Object.entries(arsenal.current.upgrades))if(level)items.push({id:'gun-'+id,title:({damage:'Impacto',magazine:'Pente estendido',reload:'Recarga rápida'})[id],symbol:id==='reload'?'bolt':'target',level,color:arsenal.stats().color});
     if(training)for(const [id,level] of Object.entries(training.levels))if(level)items.push({id:'dog-'+id,title:'Faro · '+({bite:'mordida',tempo:'cadência',agility:'velocidade',guard:'proteção',instinct:'crítico',pack:'matilha',element:'elemental'})[id],symbol:id==='element'?'spark':id==='guard'?'shield':'paw',level,color:'#99cfc0'});
     const signature=items.map(u=>u.id+u.level+u.color).join(',');
@@ -369,6 +378,8 @@ export function createExperience(game) {
   }
   function damage() {shell.classList.add('damaged');feedbackTime=.3;}
   function endGame() {
+    if(ended)return;
+    game.onEndRun?.();
     ended=true;shootHeld=false;state.paused=true;
     $('resultRound').textContent=String(roundState.round).padStart(2,'0');
     $('resultScore').textContent=totalEarned.toLocaleString('pt-BR');
@@ -390,7 +401,7 @@ export function createExperience(game) {
     displayedCoins=THREE.MathUtils.lerp(displayedCoins,state.coins,1-Math.exp(-dt*14));
     if(Math.abs(displayedCoins-state.coins)<.5)displayedCoins=state.coins;
     ui.coins.textContent=Math.round(displayedCoins).toLocaleString('pt-BR');
-    ui.health.textContent=Math.ceil(player.health);ui.healthFill.style.width=`${player.health}%`;
+    ui.health.textContent=Math.ceil(player.health);ui.healthFill.style.width=`${player.health/(player.maxHealth||100)*100}%`;
     shell.classList.toggle('low-health',player.health<=30);
     $('healthStatus').textContent=player.health<=30?'PRECISA DE UM PETISCO':player.health<70?'FIRME E FORTE':'PRONTO PRO CAOS';
     $('onboarding').classList.toggle('faded',state.time>18);
@@ -422,5 +433,5 @@ export function createExperience(game) {
     context.putImageData(data,0,0);const url=output.toDataURL('image/png');document.querySelectorAll('.meyui-portrait').forEach(img=>img.src=url);
   }
   return {bind,tick,updateCamera,shoot,resolveShot,reward,markPurchased,clearPurchased,renderPerks,announce,damage,endGame,openDrawer,
-    closeModal,portrait,icon,settings,trace,pause,resetInput};
+    closeModal,showModal,resume,portrait,icon,settings,trace,pause,resetInput};
 }

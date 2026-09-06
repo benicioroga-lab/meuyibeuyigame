@@ -1,314 +1,208 @@
+import * as THREE from 'three';
+import {createExperience} from './experience.js';
 import {GameAudio} from './systems/audio.js';
 import {drawTacticalMap} from './systems/minimap.js';
-import { createExperience } from './experience.js';
-import { WEAPONS, wavePlan, enemyStats } from './systems/config.js';
-import { CombatSystem } from './systems/combat.js';
-import { Navigation } from './systems/navigation.js';
-import { createEnemy, updateEnemyAI, disposeEnemy } from './systems/enemies.js';
-import { DogSystem } from './systems/dog.js';
-import { createShop } from './systems/shop.js';
-import { addWorldDetails } from './systems/world-detail.js';
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js';
-import { FBXLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/loaders/FBXLoader.js';
+import {createHillWorld} from './systems/hill-world.js';
+import {Navigation} from './systems/navigation.js';
+import {movePlayer} from './systems/player-movement.js';
+import {createHero} from './systems/hero.js';
+import {CombatSystem} from './systems/combat.js';
+import {createEnemy,updateEnemyAI,disposeEnemy} from './systems/enemies.js';
+import {BossSystem} from './systems/bosses.js';
+import {EnemyProjectiles} from './systems/enemy-projectiles.js';
+import {DogSystem} from './systems/dog.js';
+import {RunDirector,runRandom} from './systems/run-director.js';
+import {MetaProgression} from './systems/meta-progression.js';
+import {rollWeapon} from './systems/weapon-rolls.js';
+import {ATTACHMENTS,LOOT_WEAPONS} from './systems/loot-config.js';
+import {LootWorld} from './systems/loot-world.js';
+import {createShop} from './systems/shop.js';
+import {createRunUI} from './systems/run-ui.js';
 
-const $ = id => document.getElementById(id);
-const ui = Object.fromEntries(['coins','cosmic','level','xpLabel','xpFill','treats','power','powerName','multiplier','regionName','objectiveTitle','objectiveText','objectiveProgress','objectiveFill','drawerCoins','upgradeList','missionList','toast','eventBanner','eventText','startScreen','barkCooldown','weatherIcon','health','healthFill','puppyCount','miniMap','actionHint','roundNumber','roundStatus','roundFill'].map(k=>[k,$(k)]));
-const state={running:false,paused:false,coins:250,cosmic:0,treats:0,xp:0,level:1,power:1,destroyed:0,birds:0,treasures:0,puppies:0,multiplier:1,time:0,region:'Praia do Petisco',weather:'sol',upgrades:{speed:1,force:1,magnet:0,luck:0,dig:0,ammo:0,jump:0,bark:0,dash:0,armor:0,pack:0,range:0,crit:0,regen:0,pupPower:0,elemental:0,secret:0},missions:[
-  {id:'snacks',title:'Faro de campeão',text:'Encontre petiscos escondidos.',goal:20,value:0,reward:180},
-  {id:'smash',title:'Pequeno grande caos',text:'Destrua objetos pelo calçadão.',goal:18,value:0,reward:250},
-  {id:'dig',title:'Tesouro de areia',text:'Desenterre pontos suspeitos.',goal:3,value:0,reward:150},
-  {id:'birds',title:'Pombos em pânico',text:'Faça pombos levantarem voo.',goal:8,value:0,reward:120}
-]};
+const $=id=>document.getElementById(id);
+const ui=Object.fromEntries(['coins','cosmic','level','xpLabel','xpFill','treats','power','powerName','multiplier','regionName','objectiveTitle','objectiveText','objectiveProgress','objectiveFill','drawerCoins','upgradeList','missionList','toast','eventBanner','eventText','startScreen','barkCooldown','weatherIcon','health','healthFill','puppyCount','miniMap','actionHint','roundNumber','roundStatus','roundFill'].map(id=>[id,$(id)]));
+const state={running:false,paused:false,coins:250,cosmic:0,treats:0,xp:0,level:1,power:1,multiplier:1,time:0,earned:0,region:'Largo da Chegada',weather:'sol',upgrades:{speed:1,jump:0,dash:0,bark:0,armor:0,regen:0,magnet:0,luck:0,dig:0,secret:0},missions:[]};
 const upgrades=[
-  {id:'speed',group:'MOVIMENTO',icon:'⚡',title:'Patas Velozes',desc:'Corre mais rápido pelo mapa.',base:75},
-  {id:'jump',group:'MOVIMENTO',icon:'↑',title:'Super Pulo',desc:'Alcança telhados e atalhos ainda maiores.',base:125},
-  {id:'dash',group:'MOVIMENTO',icon:'➤',title:'Dash Salsicha+',desc:'Recarga menor e explosão de velocidade.',base:145},
-  {id:'force',group:'COMBATE',icon:'✹',title:'Latido Poderoso',desc:'Quebra coisas cada vez maiores.',base:110},
-  {id:'ammo',group:'COMBATE',icon:'🔥',title:'Latido de Fogo',desc:'Ondas sonoras mais fortes, rápidas e brilhantes.',base:140},
-  {id:'range',group:'COMBATE',icon:'⌖',title:'Eco Longo',desc:'O latido viaja por uma distância ainda maior.',base:150},
-  {id:'crit',group:'COMBATE',icon:'✷',title:'Latido Crítico',desc:'Chance de um au-que com dano explosivo.',base:175},
-  {id:'bark',group:'COMBATE',icon:'☄',title:'Super Latido',desc:'Aumenta o alcance e dano do latido sísmico.',base:155},
-  {id:'armor',group:'DEFESA',icon:'🛡',title:'Coleira Reforçada',desc:'Reduz dano dos projéteis de confete.',base:130},
-  {id:'regen',group:'DEFESA',icon:'♥',title:'Soneca Rápida',desc:'Recupera energia enquanto você explora.',base:135},
-  {id:'magnet',group:'EXPLORAÇÃO',icon:'⌁',title:'Ímã de Petiscos',desc:'Atrai petiscos próximos.',base:95},
-  {id:'luck',group:'EXPLORAÇÃO',icon:'✦',title:'Sorte Salsicha',desc:'Mais petiscos e itens dourados.',base:130},
-  {id:'dig',group:'EXPLORAÇÃO',icon:'⌄',title:'Escavação Turbo',desc:'Desenterra tesouros muito mais rápido.',base:100},
-  {id:'secret',group:'EXPLORAÇÃO',icon:'◈',title:'Faro Secreto',desc:'Amplia a busca de petiscos ocultos.',base:160},
-  {id:'pack',group:'GANGUE',icon:'🐾',title:'Treino da Gangue',desc:'Filhotes ajudam mais e rendem bônus.',base:165},
-  {id:'pupPower',group:'GANGUE',icon:'✹',title:'Mordidas de Matilha',desc:'Filhotes atacam mais forte e mais rápido.',base:180},
-  {id:'elemental',group:'GANGUE',icon:'☯',title:'Berçário Elemental',desc:'Aumenta a chance de filhotes elementais.',base:210}
+  {id:'speed',group:'MOVIMENTO',title:'Patas velozes',desc:'Mais velocidade entre as vielas.',base:95},
+  {id:'jump',group:'MOVIMENTO',title:'Salto de telhado',desc:'Mais impulso para alcançar passagens.',base:125},
+  {id:'dash',group:'MOVIMENTO',title:'Arrancada',desc:'Esquive com maior frequência.',base:145},
+  {id:'bark',group:'COMBATE',title:'Latido sísmico',desc:'Abra espaço na horda ao redor.',base:155},
+  {id:'armor',group:'DEFESA',title:'Coleira reforçada',desc:'Reduz o dano recebido.',base:160},
+  {id:'regen',group:'DEFESA',title:'Segundo respiro',desc:'Recuperação gradual após receber dano.',base:190},
+  {id:'magnet',group:'EXPLORAÇÃO',title:'Faro magnético',desc:'Alcance maior para recolher petiscos.',base:95},
+  {id:'luck',group:'EXPLORAÇÃO',title:'Sorte salsicha',desc:'Mais petiscos nas recompensas.',base:160},
 ];
-let experience, combat, dogSystem, shop, navigation, worldDetails, masterVolume=.5, terrainTick=0, totalKills=0;
-let minimapRange=32;
-const mapSeed=Math.floor(Math.random()*2147483647),ammoPickups=[];
-let soundscape;
-let scene,camera,renderer,dog,barkView,ocean,toastTimer,shake=0,lastEvent=0,dogMixer,audioContext,musicTimer,musicStep=0,musicElement,melzinhaBoss;
-const modelTemplates={caprice:null};
-const clock=new THREE.Clock(),keys={},collectibles=[],objects=[],digSpots=[],birdList=[],particles=[],projectiles=[],enemyProjectiles=[],puppyShots=[],patrolCars=[],chaosBots=[],colossi=[],friendlyDogs=[],puppyGang=[],climbPoints=[],solidColliders=[],weatherParticles=[];
-const PUPPY_ELEMENTS=[{name:'Fogo',color:'#ff704f',damage:2.15,rate:.48},{name:'Gelo',color:'#76dcff',damage:1.65,rate:.58},{name:'Raio',color:'#d4a2ff',damage:2.45,rate:.4}];
-const roundState={round:1,kills:0,target:0,active:false,cooldown:8,special:false};
-const terrainChunks=new Map(),CHUNK_SIZE=36,CHUNK_RADIUS=2;
-let weatherRoot,weatherNext=22,weatherWave;
-const player={thirdPerson:false,pos:new THREE.Vector3(-10,0,6),velocity:new THREE.Vector3(),moveVelocity:new THREE.Vector3(),dir:0,cameraYaw:0,cameraPitch:-.18,onGround:true,groundY:0,climbTarget:null,action:'idle',actionUntil:0,dash:0,dashCooldown:0,aiming:false,aimHeld:false,fireCooldown:0,barkCooldown:0,firing:0,health:100,damageCooldown:0};
-const dogParts={},camPos=new THREE.Vector3(),camLook=new THREE.Vector3();
+const player={pos:new THREE.Vector3(),velocity:new THREE.Vector3(),moveVelocity:new THREE.Vector3(),thirdPerson:false,cameraYaw:0,cameraPitch:-.045,dir:0,onGround:true,groundY:0,health:100,maxHealth:100,shield:0,shieldTime:0,damageCooldown:0,dash:0,dashCooldown:0,barkCooldown:0,firing:0,aiming:false,aimHeld:false,downed:false,downTimer:0};
+const roundState={round:1,kills:0,target:0,active:false,cooldown:4};
+const keys={},enemies=[],colliders=[],props=[],usedInteractions=new Set();
+const seed=crypto.getRandomValues(new Uint32Array(1))[0],random=runRandom(seed);
+const meta=new MetaProgression();
+let scene,camera,renderer,world,navigation,hero,dog,barkView,combat,companion,bosses,loot,shop,experience,runUI,director,enemyProjectiles;
+let audioContext,soundscape,masterVolume=.5,bonuses=meta.getRunBonuses(),mapRange=26,uiClock=0,slowTime=0,roundDamage=0,damageWindow=0,damageRecent=0,ended=false,challenge=null,quest=null;
+let sunlight,ambient,toastTimer,interactionFocus=null,lateChoice=null;
+const timer=new THREE.Clock();
+const alive=()=>enemies.filter(enemy=>!enemy.disabled);
+const active=()=>state.running&&!state.paused&&!ended;
+const modifiers=()=>({...director?.modifiers,reward:(director?.modifiers.reward||1)*(1+state.upgrades.luck*.12)});
+const point=value=>new THREE.Vector3(value.x,value.y||0,value.z);
+function toast(message){ui.toast.textContent=message;ui.toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>ui.toast.classList.remove('show'),3000);}
+function initAudio(){if(!audioContext){const Context=window.AudioContext||window.webkitAudioContext;if(!Context)return;audioContext=new Context();soundscape=new GameAudio(audioContext);soundscape.setVolume(masterVolume);soundscape.setMix((experience?.settings.musicVolume??35)/100,(experience?.settings.effectsVolume??80)/100);}audioContext.resume?.();}
+function playSound(type){soundscape?.play(type);}
+function coins(amount){if(!Number.isFinite(amount))return;state.coins=Math.max(0,state.coins+Math.round(amount));if(amount>0){state.earned+=Math.round(amount);state.treats++;}experience?.reward(Math.round(amount));}
+function gainXP(amount){state.xp+=Math.max(0,Math.round(amount||0));let needed=80+state.level*35;while(state.xp>=needed){state.xp-=needed;state.level++;needed=80+state.level*35;player.health=Math.min(player.maxHealth,player.health+8);playSound('level');}}
 
-function material(color,rough=.75){return new THREE.MeshStandardMaterial({color,roughness:rough,metalness:0});}
-function mesh(geo,mat,x=0,y=0,z=0,scale=1,parent=scene){const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);typeof scale==='number'?m.scale.setScalar(scale):m.scale.copy(scale);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m;}
-function makeCanvasTexture(text){const c=document.createElement('canvas');c.width=512;c.height=160;const x=c.getContext('2d');x.fillStyle='#fdf3be';x.textAlign='center';x.font='900 42px Nunito';text.split('\n').forEach((line,i)=>x.fillText(line,256,58+i*51));const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;return t;}
-function initAudio(){
-  if(!audioContext){const AudioContext=window.AudioContext||window.webkitAudioContext;if(!AudioContext)return;audioContext=new AudioContext();soundscape=new GameAudio(audioContext);soundscape.setVolume(masterVolume);soundscape.setMix((experience?.settings.musicVolume??35)/100,(experience?.settings.effectsVolume??80)/100);}
-  audioContext.resume?.();
-}
-function playSound(type){soundscape?.play(type==='bot'?'hurt':type);}
-function startMusic(){initAudio();soundscape?.setActive(true);}
 function setup(){
-  renderer=new THREE.WebGLRenderer({canvas:$('game'),antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.02;
-  scene=new THREE.Scene();scene.background=new THREE.Color('#7a969b');scene.fog=new THREE.Fog('#7a969b',45,145);camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,.1,250);camera.position.set(-2,7,14);scene.add(camera);
-  scene.add(new THREE.HemisphereLight('#d2ded5','#5f6b54',2.1));const sun=new THREE.DirectionalLight('#e4d8b7',1.85);sun.position.set(-42,62,28);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-55;sun.shadow.camera.right=55;sun.shadow.camera.top=55;sun.shadow.camera.bottom=-55;scene.add(sun);weatherRoot=new THREE.Group();scene.add(weatherRoot);
-  navigation=new Navigation(solidColliders);makeWorld();worldDetails=addWorldDetails(scene,solidColliders,mapSeed);settleContent();makeDog();makeBarkView();loadGameModels();bind();updateUI();resize();experience.portrait();THREE.DefaultLoadingManager.onLoad=()=>experience.portrait();spawnAmmo(-7,14);animate();
+  renderer=new THREE.WebGLRenderer({canvas:$('game'),antialias:true,powerPreference:'high-performance'});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.08;
+  scene=new THREE.Scene();scene.background=new THREE.Color('#899b9b');scene.fog=new THREE.Fog('#899b9b',48,150);camera=new THREE.PerspectiveCamera(66,innerWidth/innerHeight,.08,230);scene.add(camera);
+  ambient=new THREE.HemisphereLight('#e1e9dc','#4c5142',2.3);sunlight=new THREE.DirectionalLight('#ffe0af',2.5);sunlight.position.set(-24,54,-22);sunlight.castShadow=true;sunlight.shadow.mapSize.set(2048,2048);Object.assign(sunlight.shadow.camera,{left:-52,right:52,top:80,bottom:-80,far:170});sunlight.shadow.bias=-.0003;scene.add(ambient,sunlight);
+  world=createHillWorld({scene,colliders,seed});player.pos.copy(world.spawn);navigation=new Navigation(colliders,{heightAt:world.heightAt});
+  hero=createHero(scene,player,()=>experience?.portrait());dog=hero.root;barkView=new THREE.Group();camera.add(barkView);
+  experience=createExperience({THREE,state,player,ui,keys,upgrades,scene,camera,renderer,dog,dogParts:hero.parts,barkView,roundState,solidColliders:colliders,objects:props,chaosBots:enemies,colossi:[],projectiles:[],
+    bark,sniff,dig:interact,jump,dash,formPack:()=>companion.command(),renderUpgrades:()=>{shop?.setStation(nearInteraction()?.type==='forge'?'forge':null);shop?.render();},renderMissions:()=>runUI?.renderChallenges(),drawMiniMap,updateUI,initAudio,startMusic:()=>{initAudio();soundscape?.setActive(true);},playSound,dust:()=>{},showToast:toast,resize,prestige:()=>{},getBoss:()=>null,getCombat:()=>combat,getDog:()=>companion,getDirector:()=>director,startRun,onEndRun:finishRun,onMenu:()=>runUI?.renderMenu(),
+    openInventory:()=>{shop.setStation(null);shop.openTab('inventory');experience.openDrawer('upgradeDrawer');},
+    setShake:()=>{},setVolume:value=>{masterVolume=value;soundscape?.setVolume(value);},setAudioMix:(music,effects)=>soundscape?.setMix(music,effects),pauseMusic:()=>soundscape?.setActive(false),resumeMusic:()=>soundscape?.setActive(true)});
+  combat=new CombatSystem({scene,camera,dog,player,colliders,props,enemies,getBoss:()=>null,getWorld:()=>world,settings:()=>experience.settings,active,time:()=>state.time,getAudio:()=>audioContext,getAudioEngine:()=>soundscape,getVolume:()=>masterVolume,getModifiers:modifiers,syncAim:()=>experience.updateCamera(0),toast,reward:value=>experience.reward(value),onKill:enemyKilled,onDamageDealt:amount=>damageRecent+=amount});
+  enemyProjectiles=new EnemyProjectiles({scene,player,combat,hurtPlayer:hurt,active});
+  companion=new DogSystem({scene,hero:dog,player,enemies,navigation,combat,toast,getLoot:()=>loot,getPlayerState:()=>player,revivePlayer:revive,grantShield:(amount,duration)=>{player.shield=Math.max(player.shield,amount);player.shieldTime=duration;},metaBonuses:bonuses});
+  loot=new LootWorld({scene,player,combat,world,getDirector:()=>director,state,reward:coins,toast,onCollect:collectedLoot,getDog:()=>companion,random});
+  shop=createShop({state,roundState,combat,dog:companion,legacyUpgrades:upgrades,buyLegacy:buy,toast,updateUI,getDirector:()=>director,getMeta:()=>meta,world});
+  bosses=new BossSystem({scene,player,enemies,navigation,world,combat,onReward:bossReward,announce:(title,text)=>experience.announce('CONFRONTO ESPECIAL',title,text||''),audio:{play:playSound},getRound:()=>director?.round||1,getModifiers:()=>({health:(director?.difficultyConfig.health||1)*(director?.chaosConfig.health||1),damage:(director?.difficultyConfig.damage||1)*(director?.chaosConfig.damage||1),chaos:director?.chaos||0}),hurtPlayer:hurt});
+  runUI=createRunUI({meta,getDirector:()=>director,experience,toast,onChoose:id=>{const accepted=director.choosePerk(id);if(accepted)refreshStats();return accepted;}});
+  experience.bind();runUI.renderMenu();updateUI();resize();experience.portrait();
+  $('mapZoomIn').onclick=()=>{mapRange=Math.max(16,mapRange-5);drawHudMap();};$('mapZoomOut').onclick=()=>{mapRange=Math.min(60,mapRange+5);drawHudMap();};
+  $('mobileInteract')?.addEventListener('click',interact);animate();
 }
-function makeWorld(){
-  const ground=mesh(new THREE.PlaneGeometry(175,145),material('#8f8667'),17,0,3);ground.rotation.x=-Math.PI/2;
-  ocean=mesh(new THREE.PlaneGeometry(150,150),material('#2d7189',.35),-67,-.12,0);ocean.rotation.x=-Math.PI/2;ocean.receiveShadow=false;
-  const boardwalk=mesh(new THREE.BoxGeometry(38,.12,140),material('#9ba19a'),-3,.05,2);boardwalk.castShadow=false;const road=mesh(new THREE.BoxGeometry(23,.15,120),material('#3e484e'),38,.06,0);road.castShadow=false;
-  for(let z=-54;z<60;z+=7){const stripe=mesh(new THREE.BoxGeometry(.32,.02,3.4),material('#eee3ac'),38,.15,z);stripe.castShadow=false;}
-  for(let i=0;i<40;i++){const z=-68+(i%14)*10+(i%2)*2,foam=mesh(new THREE.TorusGeometry(1.2,.08,6,12),material('#dffbfa'),-34-(i%3)*10,.035,z);foam.rotation.x=-Math.PI/2;foam.scale.x=1.8;foam.castShadow=false;}
-  for(let z=-52;z<64;z+=16){umbrella(-24,z,z%32===0?'#ff7560':'#f7c958');palm(-17,z+5,1);palm(10,z-5,.82);}
-  const cols=['#a25d56','#92734e','#58798a','#8d5d79'];for(let z=-52,i=0;z<61;z+=17,i++){building(52,z,9+(i%3)*2,cols[i%4]);building(66,z+4,8+(i%4),cols[(i+1)%4]);}streetDetails();
-  mountain(83,0,14,'#455b55');mountain(94,-17,20,'#3f514e');mountain(91,25,18,'#53625d');hillsideNeighborhood();makeMelzinha();makePatrolCar(34,-46,1,.8);makePatrolCar(43,30,-1,1.05);gate(18,-4,'RUAS DA\nCONFUSÃO',30);gate(42,24,'CENTRO DO\nCAOS',60);gate(65,47,'MORRO DO\nMISTÉRIO',90);statue(-4,45);npc(-9,-25,'#a35952');npc(8,32,'#b49962');npc(42,-32,'#528296');spawnContent();
+function startRun(){
+  bonuses=meta.getRunBonuses();meta.beginRun({runId:`${seed}:${Date.now()}`});
+  director=new RunDirector({difficulty:$('difficultySelect')?.value||'normal',chaos:Number($('chaosSelect')?.value||0),seed,meta,runId:meta.runId,emit:runEvent});
+  player.maxHealth=Math.round(100*bonuses.maxHealthMultiplier);player.health=player.maxHealth;
+  if(bonuses.startingWeaponId!=='biscuit'){combat.arsenal.grant(bonuses.startingWeaponId);combat.arsenal.equip(bonuses.startingWeaponId);}
+  const part=ATTACHMENTS[bonuses.startingAttachmentId];if(part){const stashId=combat.arsenal.addAttachment(part.id);if(stashId)combat.arsenal.equipAttachment(stashId);}
+  for(const entry of combat.arsenal.inventory.values())entry.reserve=Math.min(combat.arsenal.stats(entry.id).maxReserve,Math.round(entry.reserve*bonuses.startingAmmoMultiplier));
+  companion.training.healthMultiplier=bonuses.dogHealthMultiplier;companion.health=companion.training.stats().health;companion.skinColor=bonuses.skinColor;
+  director.start();runUI.renderMenu();loot.spawnAmmo(world.spawn.clone().add(new THREE.Vector3(-2,0,5)));
 }
-function umbrella(x,z,color){mesh(new THREE.CylinderGeometry(.08,.08,2.2,8),material('#80513d'),x,1.1,z);const top=mesh(new THREE.ConeGeometry(2.1,.7,16),material(color),x,2.3,z);top.scale.z=.85;}
-function palm(x,z,s=1){const trunk=mesh(new THREE.CylinderGeometry(.23,.38,5*s,8),material('#9b603e'),x,2.5*s,z);trunk.rotation.z=.09;for(let i=0;i<7;i++){const leaf=mesh(new THREE.SphereGeometry(.78*s,8,6),material('#418961'),x+Math.cos(i)*1.05*s,5*s,z+Math.sin(i)*1.05*s,new THREE.Vector3(1.6,.28,.58));leaf.rotation.y=i*.9;}}
-function addCollider(x,z,width,depth,height=99,owner=null){solidColliders.push({x,z,width,depth,height,owner});}
-function building(x,z,h,color){mesh(new THREE.BoxGeometry(7,h,9),material(color),x,h/2,z);mesh(new THREE.BoxGeometry(7.4,.4,9.4),material('#e7f0dc'),x,h+.15,z);for(let a=0;a<2;a++)for(let b=0;b<2;b++){const w=mesh(new THREE.BoxGeometry(1.3,1.3,.08),material('#2f6381'),x-1.8+a*3.4,h*.45+b*2.2,z-4.55);w.castShadow=false;}addCollider(x,z,7,9,h);}
-function mountain(x,z,s,color){const m=mesh(new THREE.ConeGeometry(s*.75,s*1.8,8),material(color),x,s*.8,z);m.scale.z=.8;m.castShadow=false;for(let i=0;i<4;i++)palm(x-4+i*3,z+3+(i%2)*4,.65);}
-function streetDetails(){const pole=material('#314b58'),lamp=new THREE.MeshStandardMaterial({color:'#fff2ae',emissive:'#ffd85d',emissiveIntensity:1.15});for(let z=-48;z<56;z+=14){mesh(new THREE.CylinderGeometry(.12,.16,5.8,8),pole,26,2.9,z);mesh(new THREE.CylinderGeometry(.12,.16,5.8,8),pole,50,2.9,z+6);mesh(new THREE.SphereGeometry(.27,10,8),lamp,26,5.8,z,1);mesh(new THREE.SphereGeometry(.27,10,8),lamp,50,5.8,z+6,1);}for(let z=-44;z<54;z+=18){const stall=new THREE.Group();stall.position.set(17,0,z);mesh(new THREE.BoxGeometry(2.6,1.4,1.5),material(z%36?'#edb955':'#d86655'),0,.7,0,1,stall);mesh(new THREE.ConeGeometry(1.65,.58,4),material('#f7e6b6'),0,1.7,0,1,stall);scene.add(stall);}for(let i=0;i<9;i++){const cone=mesh(new THREE.ConeGeometry(.22,.55,10),material('#ff7d47'),31+i%2*13,.3,-38+Math.floor(i/2)*12);cone.castShadow=false;}}
-function hillsideNeighborhood(){const palette=['#875851','#8d754b','#507380','#7d576f','#64715d','#7e654e'];for(let row=0;row<4;row++){const elevation=row*1.28;for(let col=0;col<5;col++){const x=68+col*5.1+(row%2)*2.4,z=-18+row*10+(col%2)*1.3;hillsideHouse(x,z,elevation,palette[(row*3+col)%palette.length]);}const landing=mesh(new THREE.BoxGeometry(31,.4,5),material(row%2?'#6f6757':'#82785e'),78,elevation-.25,-17+row*10);landing.castShadow=false;makeClimbPoint(65,-17+row*10,elevation,2.6);}[[58,-24,.45],[61,-21,1.05],[64,-19,1.7],[67,-17,2.4],[70,-15,3.2],[74,-12,4.1],[79,-8,5]].forEach(([x,z,h])=>makeClimbPoint(x,z,h,2.1));for(let i=0;i<24;i++){const cable=mesh(new THREE.CylinderGeometry(.018,.018,7,6),material('#263b47'),65+(i%4)*8,4+(i%3)*1,-25+Math.floor(i/4)*9);cable.rotation.z=Math.PI/2;}}
-function makeClimbPoint(x,z,height,radius){const step=mesh(new THREE.CylinderGeometry(radius*.72,radius,Math.max(.22,height+.12),8),material('#937b5e'),x,Math.max(.11,height/2),z);step.castShadow=false;climbPoints.push({x,z,height,radius});}
-function hillsideHouse(x,z,y,color){const g=new THREE.Group();g.position.set(x,y,z);mesh(new THREE.BoxGeometry(4.3,3.3,4),material(color),0,1.65,0,1,g);mesh(new THREE.ConeGeometry(3.3,1.4,4),material('#d9e0d3'),0,4,0,1,g);const door=mesh(new THREE.BoxGeometry(.9,1.5,.08),material('#6b4a3c'),0,.76,-2.05,1,g);door.castShadow=false;[-1.2,1.2].forEach(px=>{const window=mesh(new THREE.BoxGeometry(.72,.7,.08),material('#315f79'),px,2.25,-2.06,1,g);window.castShadow=false;});const tank=mesh(new THREE.CylinderGeometry(.54,.64,.9,10),material('#467a88'),1.25,4.7,.45,1,g);tank.castShadow=false;scene.add(g);addCollider(x,z,4.3,4,3.3+y);}
-function noise2(x,z,salt=0){const value=Math.sin(x*127.1+z*311.7+salt*71.3+mapSeed*.001)*43758.5453123;return value-Math.floor(value);}
-function terrainBiome(cx,cz){const n=noise2(cx,cz,5);return n<.22?'areia':n<.5?'grama':n<.76?'cidade':'morro';}
-function solidCollision(pos,radius=.55){for(const solid of solidColliders){if(pos.y>solid.height+.1)continue;const dx=pos.x-solid.x,dz=pos.z-solid.z,limitX=solid.width/2+radius,limitZ=solid.depth/2+radius;if(Math.abs(dx)>=limitX||Math.abs(dz)>=limitZ)continue;const overlapX=limitX-Math.abs(dx),overlapZ=limitZ-Math.abs(dz);if(overlapX<overlapZ)pos.x=solid.x+(dx>=0?limitX:-limitX);else pos.z=solid.z+(dz>=0?limitZ:-limitZ);}}
-function chunkBuilding(group,x,z,width,depth,height,color,key){const wall=mesh(new THREE.BoxGeometry(width,height,depth),material(color),x,height/2,z,1,group);const roof=mesh(new THREE.BoxGeometry(width+.35,.24,depth+.35),material('#e9e5ca'),x,height+.12,z,1,group);wall.userData.chunkKey=key;roof.userData.chunkKey=key;for(let floor=1;floor<height-1;floor+=2.2){for(let side=-1;side<=1;side+=2){const window=mesh(new THREE.BoxGeometry(.7,.72,.05),material('#25586c'),x+side*(width*.26),floor,z-depth/2-.03,1,group);window.castShadow=false;}}addCollider(x,z,width,depth,height,key);}
-function buildTerrainChunk(cx,cz){const key=`${cx}:${cz}`;if(terrainChunks.has(key)||cx>=-2&&cx<=2&&cz>=-2&&cz<=1)return;const group=new THREE.Group(),baseX=cx*CHUNK_SIZE,baseZ=cz*CHUNK_SIZE,biome=terrainBiome(cx,cz),colors={areia:'#ab9463',grama:'#526e58',cidade:'#66737a',morro:'#4d6955'},groundGeo=new THREE.PlaneGeometry(CHUNK_SIZE,CHUNK_SIZE,12,12),positions=groundGeo.attributes.position;
-  for(let i=0;i<positions.count;i++){const x=baseX+positions.getX(i),z=baseZ+positions.getY(i),relief=(noise2(x*.12,z*.12,2)-.5)*.18;positions.setZ(i,relief);}groundGeo.rotateX(-Math.PI/2);groundGeo.computeVertexNormals();const ground=mesh(groundGeo,material(colors[biome],.92),baseX+CHUNK_SIZE/2,-.07,baseZ+CHUNK_SIZE/2,1,group);ground.castShadow=false;
-  const crossRoad=noise2(cx,cz,8)>.44;if(crossRoad){const vertical=noise2(cx,cz,9)>.5;const road=mesh(new THREE.BoxGeometry(vertical?6:CHUNK_SIZE,.04,vertical?CHUNK_SIZE:6),material('#3d474c'),baseX+CHUNK_SIZE/2,.015,baseZ+CHUNK_SIZE/2,1,group);road.castShadow=false;}
-  const palette=['#875b57','#8a704d','#4f7180','#80576f','#637657','#766086'];for(let i=0;i<(biome==='cidade'?6:biome==='morro'?4:biome==='grama'?2:1);i++){const n=noise2(cx*13+i,cz*17+i,11),m=noise2(cx*23+i,cz*7+i,12),width=4+n*3,depth=4+m*3,height=4+Math.floor(noise2(cx+i,cz-i,13)*4)*2;let x=baseX+4+n*(CHUNK_SIZE-8),z=baseZ+4+m*(CHUNK_SIZE-8);if(crossRoad){if(Math.abs(x-(baseX+CHUNK_SIZE/2))<5)x+=x<baseX+CHUNK_SIZE/2?-6:6;if(Math.abs(z-(baseZ+CHUNK_SIZE/2))<5)z+=z<baseZ+CHUNK_SIZE/2?-6:6;}chunkBuilding(group,x,z,width,depth,height,palette[THREE.MathUtils.euclideanModulo(i+cx+cz,palette.length)],key);}
-  for(let i=0;i<8;i++){const n=noise2(cx*9+i,cz*4-i,20),m=noise2(cx*3-i,cz*11+i,21),x=baseX+2+n*(CHUNK_SIZE-4),z=baseZ+2+m*(CHUNK_SIZE-4);if(biome==='morro'){const hill=mesh(new THREE.ConeGeometry(2.8+n*2.2,3+n*3,8),material('#4e825b'),x,1.5,z,1,group);hill.castShadow=false;}else{mesh(new THREE.CylinderGeometry(.13,.23,2.2,7),material('#875a3d'),x,1.1,z,1,group);const crown=mesh(new THREE.SphereGeometry(.8+n*.5,8,6),material(biome==='areia'?'#4c9069':'#4f955d'),x,2.5,z,new THREE.Vector3(1,.65,1),group);crown.castShadow=false;}}
-  for(let i=0;i<3;i++){const n=noise2(cx*31+i,cz*29-i,31),m=noise2(cx*43-i,cz*37+i,32),t=treat(baseX+3+n*(CHUNK_SIZE-6),baseZ+3+m*(CHUNK_SIZE-6),5000+cx*91+cz*37+i,group);t.userData.chunkKey=key;}for(let i=0;i<4;i++){const n=noise2(cx*19+i,cz*27-i,41),m=noise2(cx*37-i,cz*17+i,42),prop=breakable(baseX+3+n*(CHUNK_SIZE-6),baseZ+3+m*(CHUNK_SIZE-6),8000+cx*73+cz*47+i,group);prop.userData.chunkKey=key;prop.userData.required=1+i;}for(let i=0;i<2;i++){const n=noise2(cx*59+i,cz*61-i,47),m=noise2(cx*67-i,cz*53+i,48);makeChaosBot(baseX+4+n*(CHUNK_SIZE-8),baseZ+4+m*(CHUNK_SIZE-8),9000+cx*31+cz*23+i,key);}for(let i=0;i<2;i++){const n=noise2(cx*83+i,cz*79-i,55),m=noise2(cx*71-i,cz*89+i,56);makeCompanionDog(baseX+3+n*(CHUNK_SIZE-6),baseZ+3+m*(CHUNK_SIZE-6),12000+cx*97+cz*67+i,key);}
-  terrainChunks.set(key,{group,cx,cz});scene.add(group);
+function refreshStats(){
+  const previous=player.maxHealth;player.maxHealth=Math.round(100*bonuses.maxHealthMultiplier*(director?.modifiers.maxHealth||1));
+  player.health=Math.min(player.maxHealth,player.health+Math.max(0,player.maxHealth-previous));combat.arsenal.setModifiers(modifiers());
 }
-function updateTerrain(){const cx=Math.floor(player.pos.x/CHUNK_SIZE),cz=Math.floor(player.pos.z/CHUNK_SIZE);for(let x=cx-CHUNK_RADIUS;x<=cx+CHUNK_RADIUS;x++)for(let z=cz-CHUNK_RADIUS;z<=cz+CHUNK_RADIUS;z++)buildTerrainChunk(x,z);for(const [key,chunk] of terrainChunks){if(Math.abs(chunk.cx-cx)<=CHUNK_RADIUS+1&&Math.abs(chunk.cz-cz)<=CHUNK_RADIUS+1)continue;disposeEffect(chunk.group);terrainChunks.delete(key);for(let i=solidColliders.length-1;i>=0;i--)if(solidColliders[i].owner===key)solidColliders.splice(i,1);for(let i=collectibles.length-1;i>=0;i--)if(collectibles[i].userData.chunkKey===key)collectibles.splice(i,1);for(let i=objects.length-1;i>=0;i--)if(objects[i].userData.chunkKey===key)objects.splice(i,1);for(let i=chaosBots.length-1;i>=0;i--)if(chaosBots[i].owner===key){disposeEnemy(chaosBots[i]);chaosBots.splice(i,1);}for(let i=friendlyDogs.length-1;i>=0;i--)if(friendlyDogs[i].owner===key){disposeEffect(friendlyDogs[i].g);friendlyDogs.splice(i,1);}}}
-function setWeather(mode){
-  for(const child of [...weatherRoot.children])disposeEffect(child);weatherParticles.length=0;weatherWave=null;state.weather=mode;const styles={sol:{label:'Crepúsculo nebuloso',icon:'☀',color:'#4f6575',fog:'#536774'},chuva:{label:'Chuva de verão',icon:'🌧',color:'#596b77',fog:'#657780'},neve:{label:'Neve mágica',icon:'❄',color:'#92a1a9',fog:'#a9b6bc'},lava:{label:'Chuva de lava cartunesca',icon:'🌋',color:'#8f5c51',fog:'#a16557'},vento:{label:'Vento forte',icon:'🍃',color:'#71847c',fog:'#7f9189'},furacao:{label:'Furacão de confete',icon:'🌀',color:'#59647d',fog:'#67728a'},tsunami:{label:'Tsunami de espuma',icon:'🌊',color:'#536e89',fog:'#62809a'}}[mode]||{label:'Crepúsculo nebuloso',icon:'☀',color:'#4f6575',fog:'#536774'};
-  scene.background.set(styles.color);scene.fog.color.set(styles.fog);ui.weatherIcon.textContent=styles.icon;ui.eventText.textContent=styles.label.toUpperCase();ui.eventBanner.classList.add('show');setTimeout(()=>ui.eventBanner.classList.remove('show'),4200);if(mode==='sol')return;
-  const amount=mode==='chuva'?120:mode==='neve'?95:mode==='furacao'?90:mode==='vento'?65:mode==='lava'?60:45;const visuals={chuva:{geo:new THREE.BoxGeometry(.025,.75,.025),color:'#9ee9ff',speed:24},neve:{geo:new THREE.SphereGeometry(.07,6,5),color:'#ffffff',speed:2.5},lava:{geo:new THREE.SphereGeometry(.09,7,6),color:'#ff9f45',speed:11},vento:{geo:new THREE.ConeGeometry(.075,.36,5),color:'#d8e3a4',speed:5},furacao:{geo:new THREE.SphereGeometry(.055,6,5),color:'#e9ddff',speed:6},tsunami:{geo:new THREE.SphereGeometry(.07,6,5),color:'#d8fcff',speed:4}}[mode];for(let i=0;i<amount;i++){const particle=mesh(visuals.geo,new THREE.MeshBasicMaterial({color:visuals.color,transparent:true,opacity:mode==='chuva'?.58:.82}),0,0,0,1,weatherRoot);particle.castShadow=false;weatherParticles.push({mesh:particle,x:(Math.random()-.5)*34,z:(Math.random()-.5)*34,y:Math.random()*15+1,speed:visuals.speed,phase:Math.random()*Math.PI*2});}
-  if(mode==='tsunami'){weatherWave=mesh(new THREE.BoxGeometry(38,5.5,.8),new THREE.MeshBasicMaterial({color:'#4fc2e8',transparent:true,opacity:.58}),0,0,0,1,weatherRoot);weatherWave.castShadow=false;}
+function runEvent(event){
+  switch(event.type){
+    case 'spawn':spawnEnemy(event);break;
+    case 'round-start':roundDamage=0;roundState.round=event.round;experience.announce('A LIGA DO RUÍDO SE APROXIMA',`ROUND ${String(event.round).padStart(2,'0')}`,event.mutators?.map(m=>m.name).join(' · ')||'Explore. Arme-se. Sobreviva.');playSound('round-start');break;
+    case 'kill':loot.spawnMoney(Math.round(event.reward*(1+state.upgrades.luck*.12)),point(event.position));gainXP(event.xp);if(event.heal)player.health=Math.min(player.maxHealth,player.health+event.heal);break;
+    case 'loot-drop':loot.spawnWeapon(rollWeapon({round:event.round,difficulty:director.difficulty,chaos:director.chaos,quality:event.qualityBonus,seed:Math.floor(random()*1e9),metaUnlocks:bonuses.metaUnlocks}),point(event.position));break;
+    case 'powerup-drop':loot.spawnPowerup(event.id,point(event.position));break;
+    case 'supply-drop':loot.spawnAmmo(point(event.position));break;
+    case 'round-complete':
+      coins(event.reward);gainXP(event.xp);meta.record('roundComplete',{round:event.round,damageTaken:roundDamage});player.health=Math.min(player.maxHealth,player.health+12);slowTime=experience.settings.reduceMotion?0:.34;
+      experience.announce('MORRO CONQUISTADO',`ROUND ${event.round} COMPLETO`,`+${event.reward} petiscos · Abra um baú ou visite a forja.`);playSound('round-complete');loot.spawnAmmo(player.pos.clone().add(new THREE.Vector3(1.5,0,2)));break;
+    case 'perk-choice':lateChoice=event.choices;break;
+    case 'perk-chosen':refreshStats();playSound('purchase');if(event.effect==='coins'||event.id==='payday')coins(event.value);if(event.effect==='ammo')combat.arsenal.addAmmo(.5);if(event.effect==='heal'){player.health=Math.min(player.maxHealth,player.health+60);companion.health=Math.min(companion.training.stats().health,companion.health+40);}break;
+    case 'milestone':meta.award('milestone',event);break;
+    case 'powerup-active':
+      experience.announce('POWER-UP!',event.name,`${event.duration?`${event.duration}s · `:''}Sua build ganhou fôlego.`);playSound('powerup');
+      if(event.effect==='coins')coins(event.value);
+      if(event.effect==='nuke')for(const enemy of [...alive()])combat.damage(enemy,event.value,{source:'powerup',effect:'explosive'});
+      break;
+    case 'event-start':experience.announce('O MORRO MUDOU',event.event.name,event.event.description);playSound('event');if(event.id==='bossHunt')startWorldBoss();break;
+    case 'world-boss':startWorldBoss();break;
+    case 'perk-purchased':experience.reward(-event.cost);meta.record('purchase');break;
+  }
 }
-function updateWeather(dt){
-  if(state.time>=weatherNext){const modes=['chuva','vento','sol'];setWeather(modes[Math.floor(Math.random()*modes.length)]);weatherNext=state.time+70+Math.random()*30;}
-  for(const particle of weatherParticles){if(state.weather==='furacao'){const orbit=7+particle.phase%9,angle=state.time*particle.speed+particle.phase;particle.mesh.position.set(player.pos.x+Math.cos(angle)*orbit,1.2+(particle.phase%4)*.7,player.pos.z+Math.sin(angle)*orbit);particle.mesh.rotation.y=angle;}else{particle.y-=particle.speed*dt;if(particle.y<.15){particle.y=12+Math.random()*7;particle.x=(Math.random()-.5)*34;particle.z=(Math.random()-.5)*34;}if(state.weather==='vento'){particle.x+=Math.sin(state.time+particle.phase)*particle.speed*dt;particle.z+=particle.speed*dt*.8;}particle.mesh.position.set(player.pos.x+particle.x,particle.y,player.pos.z+particle.z);particle.mesh.rotation.y+=dt*5;}}
-  if(weatherWave){const cycle=(state.time*5)%54-27;weatherWave.position.set(player.pos.x,2.75,player.pos.z+cycle);weatherWave.rotation.y=Math.sin(state.time*.4)*.2;}
+function spawnEnemy(event){
+  const angle=event.angle??random()*Math.PI*2,distance=event.distance||22;
+  const desired=player.pos.clone().add(new THREE.Vector3(Math.sin(angle)*distance,0,Math.cos(angle)*distance));
+  const candidates=world.spawnPoints.filter(p=>p.distanceTo(player.pos)>9&&p.distanceTo(player.pos)<48);
+  candidates.sort((a,b)=>a.distanceToSquared(desired)-b.distanceToSquared(desired));
+  const position=navigation.freePosition((event.position||candidates[0]||desired).clone(),.5);
+  const enemy=createEnemy(scene,{x:position.x,y:position.y,z:position.z,type:event.enemyType||'grunt',round:director.round,seed:Math.floor(random()*1e7),stats:event.stats,elite:event.elite,modifiers:event.modifiers});
+  enemy.roundEnemy=event.roundEnemy!==false;enemy.runSpawnId=event.spawnId;enemies.push(enemy);return enemy;
 }
-function makePatrolCar(x,z,direction,speed){
-  const g=new THREE.Group(),fallback=new THREE.Group(),effects=new THREE.Group(),loader=new THREE.TextureLoader();
-  const bodyTexture=loader.load('assets/police/Crown_Vic_Body_Color.png'),roughness=loader.load('assets/police/Crown_Vic_Body_Roughnes.png');bodyTexture.colorSpace=THREE.SRGBColorSpace;
-  const blue=new THREE.MeshStandardMaterial({map:bodyTexture,roughnessMap:roughness,roughness:.52,metalness:.15}),white=material('#edf6f2',.36),tire=material('#171d25'),chrome=new THREE.MeshStandardMaterial({color:'#c7e1e4',metalness:.82,roughness:.22}),glass=new THREE.MeshStandardMaterial({color:'#255f7e',roughness:.15,metalness:.15,transparent:true,opacity:.82});
-  g.position.set(x,.03,z);g.add(fallback,effects);mesh(new THREE.BoxGeometry(2.25,.52,4.45),blue,0,.42,0,1,fallback);mesh(new THREE.BoxGeometry(1.88,.62,2.05),white,0,.94,.08,1,fallback);mesh(new THREE.BoxGeometry(1.56,.38,1.42),glass,0,1.24,.08,1,fallback);mesh(new THREE.BoxGeometry(2.3,.14,.24),chrome,0,.43,-2.27,1,fallback);mesh(new THREE.BoxGeometry(2.3,.14,.24),chrome,0,.43,2.27,1,fallback);mesh(new THREE.BoxGeometry(1.15,.09,.12),chrome,0,.6,-2.42,1,fallback);
-  [-.99,.99].forEach(px=>[-1.38,1.38].forEach(pz=>{const wheel=mesh(new THREE.CylinderGeometry(.36,.36,.25,12),tire,px,.3,pz,1,fallback);wheel.rotation.z=Math.PI/2;const hub=mesh(new THREE.CylinderGeometry(.16,.16,.26,10),chrome,px,.3,pz,1,fallback);hub.rotation.z=Math.PI/2;}));
-  const red=new THREE.MeshStandardMaterial({color:'#ff4d56',emissive:'#ff232f',emissiveIntensity:1.8}),cyan=new THREE.MeshStandardMaterial({color:'#58d8ff',emissive:'#1399ff',emissiveIntensity:1.8});const left=mesh(new THREE.BoxGeometry(.42,.12,.26),red,-.34,1.58,.02,1,effects),right=mesh(new THREE.BoxGeometry(.42,.12,.26),cyan,.34,1.58,.02,1,effects);
-  g.rotation.y=direction>0?0:Math.PI;scene.add(g);const car={g,fallback,effects,direction,speed,lights:[left,right]};patrolCars.push(car);installCaprice(car);
+function enemyKilled(enemy,source,detail={}){
+  director?.onKill(enemy,{...detail,source});
+  if(source!=='self')meta.record('kill',{headshot:detail.headshot,source});
+  if(player.downed&&player.secondWind&&source==='weapon')revive(.4);
+  bosses?.onEnemyKilled?.(enemy);
 }
-function installCaprice(car){if(!modelTemplates.caprice||car.model)return;const model=modelTemplates.caprice.clone(true);model.rotation.y=Math.PI/2;car.model=model;car.fallback.visible=false;car.g.add(model);}
-function makeChaosBot(x,z,seed,owner=null,type='grunt',round=1,roundEnemy=false){
-  const position=new THREE.Vector3(x,0,z);navigation?.freePosition(position,.5*(enemyStats(type,round).scale));
-  const enemy=createEnemy(scene,{x:position.x,z:position.z,seed,owner,type,round,roundEnemy});chaosBots.push(enemy);return enemy;
+function bossReward(reward){
+  const position=reward.position||reward.enemy?.g?.position||bosses.activeBoss?.g?.position||player.pos;
+  meta.award('boss',{...reward,round:director.round,bossId:reward.bossId||reward.id||'boss',encounterId:reward.encounterId||`boss:${state.time}`});
+  loot.spawnWeapon(rollWeapon({round:director.round,rarity:'legendary',chaos:director.chaos,seed:Math.floor(random()*1e9),metaUnlocks:bonuses.metaUnlocks}),point(position));
+  loot.spawnAttachment('shockcell',point(position).add(new THREE.Vector3(1,0,0)));coins(reward.coins||450+director.round*35);
+  experience.announce('BOSS DERROTADO','O MORRO É SEU','Arma lendária · peça rara · fragmentos permanentes');playSound('boss-killed');
 }
-function makeCompanionDog(x,z,seed,owner=null){const g=new THREE.Group(),fur=material(['#d69a56','#e8e2d3','#8f6b4d','#b7a07c'][Math.abs(seed)%4]),dark=material('#513626'),cream=material('#f5d8a0');g.position.set(x,0,z);mesh(new THREE.CapsuleGeometry(.34,.78,5,8),fur,0,.4,0,new THREE.Vector3(1,1,1.45),g).rotation.z=Math.PI/2;mesh(new THREE.SphereGeometry(.36,10,8),fur,0,.62,-.65,1,g);mesh(new THREE.SphereGeometry(.16,8,6),cream,0,.51,-.98,1,g);[-.16,.16].forEach((dx,i)=>{const ear=mesh(new THREE.CapsuleGeometry(.08,.3,4,6),dark,dx*1.9,.58,-.54,1,g);ear.rotation.z=i?-.5:.5;});[-.22,.22].forEach(dx=>[-.36,.45].forEach(dz=>mesh(new THREE.CapsuleGeometry(.07,.22,4,6),fur,dx,.12,dz,1,g)));scene.add(g);friendlyDogs.push({g,home:new THREE.Vector3(x,0,z),seed,owner,paired:false});}
-function formPack(){if(!canAct())return;const partner=friendlyDogs.filter(d=>!d.paired).sort((a,b)=>dist(a.g.position,player.pos)-dist(b.g.position,player.pos))[0];if(!partner||dist(partner.g.position,player.pos)>2.8){showToast('Aproxime-se de outro cachorro e pressione G para formar uma gangue.');return;}partner.paired=true;partner.g.rotation.z=.16;const gained=Math.min(2,Math.max(0,4-puppyGang.length)),before=puppyGang.length;for(let i=0;i<gained;i++)makePuppy(puppyGang.length,partner.g.position,partner.seed+i*19);state.puppies+=gained;xp(30);coins(25);const elementals=puppyGang.slice(before).filter(pup=>pup.elemental).length;showToast(`Laço canino formado! +${gained} filhotes${elementals?` · ${elementals} elemental(is)!`:''}`);}
-function makePuppy(index,origin=player.pos,seed=index){const g=new THREE.Group(),fur=material(['#d28c52','#f4e6c2','#9d6645'][Math.abs(seed)%3]),dark=material('#4a3025'),elemental=Math.random()<Math.min(.78,.28+state.upgrades.elemental*.06)?PUPPY_ELEMENTS[Math.floor(Math.random()*PUPPY_ELEMENTS.length)]:null;mesh(new THREE.CapsuleGeometry(.18,.38,5,7),fur,0,.22,0,new THREE.Vector3(1,1,1.38),g).rotation.z=Math.PI/2;mesh(new THREE.SphereGeometry(.2,8,6),fur,0,.34,-.34,1,g);mesh(new THREE.SphereGeometry(.07,7,5),dark,0,.29,-.54,1,g);let aura=null;if(elemental){aura=mesh(new THREE.TorusGeometry(.3,.035,7,18),new THREE.MeshBasicMaterial({color:elemental.color,transparent:true,opacity:.85}),0,.08,0,1,g);aura.rotation.x=-Math.PI/2;aura.castShadow=false;const glow=mesh(new THREE.SphereGeometry(.07,7,6),new THREE.MeshBasicMaterial({color:elemental.color}),0,.53,-.34,1,g);glow.castShadow=false;}const spawnAngle=(Math.abs(seed)%360)*Math.PI/180,spawnRadius=.45+(Math.abs(seed)%4)*.18;g.position.set(origin.x+Math.cos(spawnAngle)*spawnRadius,.06,origin.z+Math.sin(spawnAngle)*spawnRadius);scene.add(g);puppyGang.push({g,index,elemental,aura,attackCooldown:.25+index*.08});}
-function makeMelzinha(){const g=new THREE.Group(),fallback=new THREE.Group();g.position.set(82,5,-8);g.add(fallback);const fur=material('#d8a66c'),white=material('#f7e5c4'),brown=material('#70452d');mesh(new THREE.CapsuleGeometry(.72,1.5,7,12),fur,0,.76,0,new THREE.Vector3(1,1,1.35),fallback).rotation.z=Math.PI/2;mesh(new THREE.SphereGeometry(.72,14,10),white,0,1.1,-1.2,1,fallback);[-.4,.4].forEach((x,i)=>{const ear=mesh(new THREE.CapsuleGeometry(.16,.65,5,8),brown,x*1.5,.92,-.92,1,fallback);ear.rotation.z=i?-.43:.43;});const aura=mesh(new THREE.TorusGeometry(1.9,.06,8,24),new THREE.MeshBasicMaterial({color:'#ffba5f',transparent:true,opacity:.65}),0,.12,0,1,g);aura.rotation.x=-Math.PI/2;aura.castShadow=false;scene.add(g);melzinhaBoss={g,fallback,aura,health:100,maxHealth:100,active:false,defeated:false,phase:'sleep',timer:0,dashDir:new THREE.Vector3(),hitCooldown:0};const texture=new THREE.TextureLoader().load('assets/melzinha/Beagle_texture.png');texture.colorSpace=THREE.SRGBColorSpace;const bossMaterial=new THREE.MeshStandardMaterial({map:texture,roughness:.78});new FBXLoader().load('assets/melzinha/Beagle.fbx',model=>{const raw=new THREE.Box3().setFromObject(model),size=raw.getSize(new THREE.Vector3()),scale=3.2/Math.max(size.x,size.y,size.z);model.scale.setScalar(scale);model.traverse(node=>{if(node.isMesh){node.material=bossMaterial;node.castShadow=true;node.receiveShadow=true;}});model.updateMatrixWorld(true);const box=new THREE.Box3().setFromObject(model),center=box.getCenter(new THREE.Vector3());model.position.set(-center.x,-box.min.y,-center.z);model.rotation.y=Math.PI;fallback.visible=false;g.add(model);melzinhaBoss.model=model;},undefined,()=>{});}
-function gate(x,z,label,need){const g=new THREE.Group();g.position.set(x,0,z);[-3.3,3.3].forEach(px=>{mesh(new THREE.BoxGeometry(.45,4,.45),material('#3a6d74'),px,2,0,1,g);mesh(new THREE.SphereGeometry(.42,10,8),material('#ffcf5c'),px,4.1,0,1,g);});mesh(new THREE.BoxGeometry(7.7,1.7,.28),material('#173d55'),0,3.5,0,1,g);const face=mesh(new THREE.PlaneGeometry(7.25,1.42),new THREE.MeshBasicMaterial({map:makeCanvasTexture(label+'\n'+need+' PETISCOS'),transparent:true}),0,3.5,.151,1,g);face.castShadow=false;scene.add(g);}
-function statue(x,z){const g=new THREE.Group();g.position.set(x,0,z);mesh(new THREE.CylinderGeometry(1.4,1.7,1.1,10),material('#b7d1cc'),0,.55,0,1,g);mesh(new THREE.SphereGeometry(.85,12,8),material('#d5e0d7'),0,1.7,0,1,g);mesh(new THREE.ConeGeometry(.55,1.3,8),material('#d5e0d7'),0,2.6,0,1,g);scene.add(g);}
-function npc(x,z,color){const g=new THREE.Group();g.position.set(x,0,z);mesh(new THREE.CylinderGeometry(.28,.34,1.4,8),material(color),0,.7,0,1,g);mesh(new THREE.SphereGeometry(.34,10,8),material('#f3c09d'),0,1.65,0,1,g);scene.add(g);}
-function spawnContent(){
-  for(let i=0;i<120;i++){let x,z;if(i<30){x=-27+Math.random()*34;z=-56+Math.random()*118;}else if(i<60){x=11+Math.random()*28;z=-55+Math.random()*105;}else if(i<90){x=35+Math.random()*30;z=-52+Math.random()*105;}else{x=60+Math.random()*28;z=-45+Math.random()*86;}treat(x,z,i);}
-  for(let i=0;i<72;i++){let x,z;if(i<30){x=-17+Math.random()*28;z=-55+Math.random()*111;}else if(i<52){x=20+Math.random()*29;z=-50+Math.random()*106;}else{x=54+Math.random()*28;z=-40+Math.random()*75;}breakable(x,z,i);}
-  for(let i=0;i<12;i++)digSpots.push(digSpot(-21+Math.random()*39,-55+Math.random()*110));for(let i=0;i<20;i++)birdList.push(bird(-11+Math.random()*20,-55+Math.random()*110));for(let i=0;i<8;i++)makeChaosBot(45+i%3*14,-46+Math.floor(i/3)*34,i);for(let i=0;i<5;i++)treat(-10,10+i*3,21001+i);makeCompanionDog(-13,13,99);for(let i=0;i<11;i++)makeCompanionDog(-18+(i%4)*12, -44+Math.floor(i/4)*31, i);
+function startWorldBoss(){if(!bosses.activeBoss){const center=player.pos.clone();bosses.start({id:`invasion-${director.round}`,name:'Invasão da Liga',position:center,center,radius:14,gateIds:[],unlockRound:1,archetype:random()<.5?'conductor':'furnace'});}}
+function collectedLoot(){/* LootWorld owns pickup sounds and currency exactly once. */}
+function buy(id){const config=upgrades.find(u=>u.id===id),level=state.upgrades[id]||0;if(!config||level>=5)return;const price=Math.round(config.base*Math.pow(1.52,level));if(state.coins<price){toast('Faltam petiscos para esta melhoria.');return;}state.coins-=price;state.upgrades[id]++;experience.reward(-price);experience.markPurchased(id);playSound('purchase');meta.record('purchase');shop.render();updateUI();}
+function jump(){if(!active()||!player.onGround||player.downed)return;player.velocity.y=9.2+state.upgrades.jump*.8;player.onGround=false;playSound('jump');}
+function dash(){if(!active()||player.dashCooldown>0||player.downed)return;player.dash=.18;player.dashCooldown=Math.max(.28,1.05-state.upgrades.dash*.085);playSound('dash');}
+function bark(){if(!active()||player.barkCooldown>0||player.downed)return;player.barkCooldown=Math.max(.7,2.1-state.upgrades.bark*.12);playSound('bark');const radius=3.4+state.upgrades.bark*.45;for(const enemy of alive())if(enemy.g.position.distanceTo(player.pos)<radius&&navigation.clearLine(player.pos,enemy.g.position,.1)){combat.damage(enemy,22+state.upgrades.bark*10,{source:'bark',effect:'kinetic'});enemy.stunTime=Math.max(enemy.stunTime||0,.55);}combat.effects.burst(player.pos.clone().add(new THREE.Vector3(0,.4,0)),'#c9e8d3',12,2);}
+function sniff(){if(!active())return;const nearby=world.interactions.filter(i=>!usedInteractions.has(i.id)).sort((a,b)=>a.position.distanceToSquared(player.pos)-b.position.distanceToSquared(player.pos))[0];if(nearby)toast(`${nearby.name} · ${Math.round(nearby.position.distanceTo(player.pos))} m · M para ver o mapa`);playSound('sniff');}
+function hurt(amount,from){
+  if(!active()||player.downed||player.damageCooldown>0||player.dash>0)return;
+  const damage=amount/(1+state.upgrades.armor*.18)*(1-(director?.modifiers.armor||0)),shield=Math.min(player.shield,damage);player.shield-=shield;player.health=Math.max(0,player.health-damage+shield);player.damageCooldown=.45;roundDamage+=damage-shield;director.onDamage(damage-shield);meta.record('damage',{amount:damage-shield});experience.damage();playSound('hurt');
+  if(player.health<=0){player.secondWind=director.consumeSecondWind();const rescue=companion.onPlayerDowned();if(player.secondWind||rescue){player.downed=true;player.downTimer=12;experience.announce('AINDA DÁ TEMPO','ÚLTIMO FÔLEGO',player.secondWind?'Elimine um inimigo para levantar.':'Faro está vindo salvar você.');}else experience.endGame();}
 }
-function treat(x,z,index,parent=scene){const g=new THREE.Group();g.position.set(x,.6,z);const legendary=index===119,healing=!legendary&&index%17===0,rare=!healing&&index%29===0,color=healing?'#62ff9a':legendary?'#c99cff':rare?'#ffd45a':'#f5a761',treatMat=healing?new THREE.MeshStandardMaterial({color,emissive:'#21c968',emissiveIntensity:1.7,roughness:.32}):material(color,.45);const body=mesh(new THREE.CylinderGeometry(.38,.38,.25,8),treatMat,0,0,0,1,g);body.rotation.x=Math.PI/2;mesh(new THREE.SphereGeometry(.2,8,6),treatMat,-.42,0,0,1,g);mesh(new THREE.SphereGeometry(.2,8,6),treatMat,.42,0,0,1,g);if(healing){const halo=mesh(new THREE.TorusGeometry(.5,.028,6,16),new THREE.MeshBasicMaterial({color:'#8affb2',transparent:true,opacity:.86}),0,-.08,0,1,g);halo.rotation.x=-Math.PI/2;halo.castShadow=false;}g.userData={rare,legendary,healing,index,baseY:.6,claimed:false};parent.add(g);collectibles.push(g);return g;}
-function breakable(x,z,index,parent=scene){const types=[{name:'lixeira',geo:new THREE.CylinderGeometry(.5,.6,1.25,10),color:'#4c9a87',y:.62},{name:'caixa',geo:new THREE.BoxGeometry(1.05,1.05,1.05),color:'#bf7a43',y:.53},{name:'vaso',geo:new THREE.CylinderGeometry(.45,.34,.85,9),color:'#e26f59',y:.43},{name:'banca',geo:new THREE.BoxGeometry(1.8,1.2,.85),color:'#f0b94e',y:.6},{name:'banco',geo:new THREE.BoxGeometry(1.9,.65,.55),color:'#8c5d3e',y:.35}],v=types[THREE.MathUtils.euclideanModulo(index,types.length)],g=new THREE.Group();g.position.set(x,0,z);mesh(v.geo,material(v.color),0,v.y,0,1,g);if(v.name==='vaso')mesh(new THREE.ConeGeometry(.62,1.2,7),material('#4a8b58'),0,1.18,0,1,g);if(v.name==='banca')mesh(new THREE.ConeGeometry(.9,.7,4),material('#ed684e'),0,1.55,0,1,g);g.userData={name:v.name,required:1+Math.floor(Math.abs(index)%72/18),broken:false,health:30};parent.add(g);objects.push(g);return g;}
-function digSpot(x,z){const r=mesh(new THREE.TorusGeometry(.58,.1,8,12),material('#b78549'),x,.07,z);r.rotation.x=-Math.PI/2;r.userData={dug:false};return r;}
-function bird(x,z){const g=new THREE.Group();g.position.set(x,.32,z);mesh(new THREE.SphereGeometry(.19,8,6),material('#566f77'),0,0,0,1,g);const w=mesh(new THREE.ConeGeometry(.28,.6,3),material('#738a8a'),0,.05,0,1,g);w.rotation.z=Math.PI/2;scene.add(g);return {g,home:new THREE.Vector3(x,.32,z),flying:0,phase:Math.random()*6};}
-function makeDog(){
-  dog=new THREE.Group();dog.position.copy(player.pos);scene.add(dog);const fallback=new THREE.Group();dog.add(fallback);dogParts.fallback=fallback;const fur=material('#a95b35'),dark=material('#69341f'),cream=material('#dfa16d'),black=material('#201a1b');
-  dogParts.body=mesh(new THREE.CapsuleGeometry(.62,1.25,7,14),fur,0,.62,0,new THREE.Vector3(1,1,1.55),fallback);dogParts.body.rotation.z=Math.PI/2;dogParts.head=mesh(new THREE.SphereGeometry(.58,16,12),fur,0,.88,-1.05,1,fallback);mesh(new THREE.SphereGeometry(.34,12,8),cream,0,.72,-1.52,new THREE.Vector3(1,.72,1),fallback);mesh(new THREE.SphereGeometry(.12,10,8),black,0,.79,-1.79,1,fallback);
-  [-.28,.28].forEach((x,i)=>{mesh(new THREE.SphereGeometry(.075,8,6),black,x,.99,-1.45,1,fallback);const ear=mesh(new THREE.CapsuleGeometry(.14,.5,5,8),dark,x*1.8,.77,-.9,1,fallback);ear.rotation.z=i?-.45:.45;dogParts['ear'+i]=ear;});dogParts.tail=mesh(new THREE.CapsuleGeometry(.1,.72,5,8),fur,0,.8,1.25,1,fallback);dogParts.tail.rotation.x=Math.PI/2.45;dogParts.legs=[];[-.38,.38].forEach(x=>[-.65,.68].forEach(z=>dogParts.legs.push(mesh(new THREE.CapsuleGeometry(.13,.34,5,8),fur,x,.28,z,1,fallback))));const shadow=mesh(new THREE.CircleGeometry(1.2,20),new THREE.MeshBasicMaterial({color:'#204553',transparent:true,opacity:.28}),0,.012,0,1,dog);shadow.rotation.x=-Math.PI/2;shadow.scale.z=1.55;shadow.castShadow=false;loadDachshund(fallback);
+function revive(fraction=.35){player.downed=false;player.health=Math.max(1,Math.round(player.maxHealth*fraction));player.damageCooldown=3;player.secondWind=false;toast('De pé! Mais um round.');playSound('powerup');}
+function finishRun(){if(ended)return;ended=true;const summary=director?.end();meta.endRun({...summary,completedRound:director?.completedRounds||0,score:state.earned,chaos:director?.chaos||0});$('resultMeta').textContent=`${meta.state.shards} fragmentos guardados · recorde: round ${meta.state.stats.bestRound}`;}
+
+function nearInteraction(){return world.interactions.filter(item=>!usedInteractions.has(item.id)&&!item.opened&&Math.abs(item.position.y-player.pos.y)<1.6&&item.position.distanceTo(player.pos)<3.15&&combat.hitWorld.lineOfSight(player.pos.clone().add(new THREE.Vector3(0,1.2,0)),item.position.clone().add(new THREE.Vector3(0,1.2,0)))).sort((a,b)=>a.position.distanceToSquared(player.pos)-b.position.distanceToSquared(player.pos))[0]||null;}
+function interact(){
+  if(!active()||player.downed)return;if(loot.interact())return;
+  const item=nearInteraction();if(!item){toast('Aproxime-se de um baú, porta ou estação.');return;}
+  if(director.round<(item.unlockRound||1)){toast(`Disponível no round ${item.unlockRound}.`);return;}
+  if(item.type==='shop'||item.type==='forge'){shop.setStation(item.type==='forge'?'forge':null);shop.openTab(item.type==='forge'?'forge':'weapons');experience.openDrawer('upgradeDrawer');return;}
+  if(state.coins<(item.cost||0)){toast(`Você precisa de ${item.cost} petiscos.`);return;}
+  if(item.type!=='door'&&item.doorId&&world.doors.find(d=>d.id===item.doorId)?.closed){toast('Abra primeiro a passagem que protege este cofre.');return;}
+  if(['challenge','quest'].includes(item.type)&&(challenge||quest)){toast('Conclua o objetivo atual antes de aceitar outro.');return;}
+  coins(-(item.cost||0));usedInteractions.add(item.id);item.opened=true;
+  if(item.type==='door'||item.type==='gate'){world.openDoor(item.id);meta.record('gate');toast('Atalho aberto. A horda também pode atravessar.');}
+  else if(item.type==='challenge'){challenge={item,time:30,start:state.time,leash:14};experience.announce('RISCO × RECOMPENSA','SEGURE A POSIÇÃO','Sobreviva por 30 s perto do relé. O loot raro é seu.');for(let i=0;i<3;i++)spawnEnemy({enemyType:i?'runner':'tank',roundEnemy:false,stats:director.statsFor(i?'runner':'tank',[]),angle:random()*6.28,distance:15});}
+  else if(item.type==='quest'){quest=item;toast('Entrega aceita. Leve a peça ao ponto marcado no mirante.');}
+  else{const rarity=item.lootTier>=3?'epic':item.lootTier>=2?'rare':item.lootTier>=1?'uncommon':undefined;loot.spawnWeapon(rollWeapon({round:director.round,rarity,seed:Math.floor(random()*1e9),chaos:director.chaos,metaUnlocks:bonuses.metaUnlocks}),item.position.clone().add(new THREE.Vector3(0,0,1)));loot.spawnAmmo(item.position.clone().add(new THREE.Vector3(1,0,0)));meta.record('chest');playSound('loot');toast('Baú aberto. Compare o equipamento antes de recolher.');}
+  if(item.mesh&&!['door','gate'].includes(item.type))item.mesh.scale.y=.65;
 }
-function loadDachshund(fallback){const textures=new THREE.TextureLoader(),base=textures.load('assets/meyui/dachshunddog3dmodel_basecolor.jpeg');base.colorSpace=THREE.SRGBColorSpace;const dogMaterial=new THREE.MeshStandardMaterial({map:base,normalMap:textures.load('assets/meyui/dachshunddog3dmodel_normal.jpeg'),roughnessMap:textures.load('assets/meyui/dachshunddog3dmodel_roughness.jpeg'),metalnessMap:textures.load('assets/meyui/dachshunddog3dmodel_metallic.jpeg'),roughness:.82,metalness:0});new FBXLoader().load('assets/meyui/dachshund+dog+3d+model.fbx',model=>{const rawBox=new THREE.Box3().setFromObject(model),rawSize=rawBox.getSize(new THREE.Vector3()),scale=2.8/Math.max(rawSize.x,rawSize.z,rawSize.y);model.scale.setScalar(scale);model.traverse(node=>{if(node.isMesh){node.material=dogMaterial;node.castShadow=true;node.receiveShadow=true;}});model.updateMatrixWorld(true);const box=new THREE.Box3().setFromObject(model),center=box.getCenter(new THREE.Vector3());model.position.set(-center.x,-box.min.y,-center.z);model.rotation.y=Math.PI/2;fallback.visible=false;dog.add(model);dogParts.imported=model;dogParts.importBaseY=model.position.y;if(model.animations.length){dogMixer=new THREE.AnimationMixer(model);dogMixer.clipAction(model.animations[0]).play();}},undefined,()=>{showToast('O modelo 3D não carregou; usando o Meyui estilizado.');});}
-function prepareModel(model,targetSize){const rawBox=new THREE.Box3().setFromObject(model),rawSize=rawBox.getSize(new THREE.Vector3()),scale=targetSize/Math.max(rawSize.x,rawSize.y,rawSize.z);model.scale.setScalar(scale);model.traverse(node=>{if(node.isMesh){node.castShadow=true;node.receiveShadow=true;}});model.updateMatrixWorld(true);const box=new THREE.Box3().setFromObject(model),center=box.getCenter(new THREE.Vector3());model.position.set(-center.x,-box.min.y,-center.z);return model;}
-function loadGameModels(){
-  new FBXLoader().load('assets/caprice-police/Chevrolet_Caprice_Tiedtke.fbx',model=>{modelTemplates.caprice=prepareModel(model,5.15);patrolCars.forEach(installCaprice);},undefined,()=>showToast('Usando as viaturas estilizadas.'));
+function updateExploration(dt){
+  interactionFocus=nearInteraction();const item=interactionFocus;
+  ui.actionHint.textContent=item?`F · ${item.name}${director.round<(item.unlockRound||1)?` · ROUND ${item.unlockRound}`:item.cost&& !['forge','shop'].includes(item.type)?` · ${item.cost} petiscos`:''}`:'';
+  ui.actionHint.classList.toggle('show',Boolean(item)&&!loot.focusDrop());
+  if(challenge){if(player.pos.distanceTo(challenge.item.position)>challenge.leash){toast('Você deixou o relé. Desafio encerrado.');challenge=null;}else{challenge.time-=dt;if(challenge.time<=0){const p=challenge.item.position;loot.spawnWeapon(rollWeapon({round:director.round,rarity:'epic',seed:Math.floor(random()*1e9)}),p);coins(250);meta.record('chest');toast('Relé protegido! Equipamento épico liberado.');challenge=null;}}}
+  if(quest&&player.pos.distanceTo(quest.target)<3){coins(quest.reward||250);gainXP(120);loot.spawnAttachment('burst',player.pos.clone());toast('Entrega concluída! Receptor de rajada + 250 petiscos.');quest=null;}
+  const event=director.event?.config?.id;
+  const black=event==='blackout',moon=event==='redmoon';ambient.intensity=THREE.MathUtils.lerp(ambient.intensity,black?.8:2.3,dt*2);sunlight.intensity=THREE.MathUtils.lerp(sunlight.intensity,black?.35:moon?1.3:2.5,dt*2);scene.fog.color.lerp(new THREE.Color(black?'#2c3741':moon?'#805b63':'#899b9b'),dt);scene.background.copy(scene.fog.color);
 }
-function makeBarkView(){barkView=new THREE.Group();barkView.visible=false;barkView.mouth=new THREE.Group();camera.add(barkView);}
-function bind(){
-  experience=createExperience({THREE,state,player,ui,keys,upgrades,scene,camera,renderer,dog,dogParts,barkView,roundState,solidColliders,objects,chaosBots,colossi,projectiles,
-    bark,sniff,dig,jump,dash,formPack,renderUpgrades,renderMissions,drawMiniMap,updateUI,initAudio,startMusic,playSound,dust,showToast,resize,prestige,
-    disableBot,damageBoss,destroy,confirmHit,getBoss:()=>melzinhaBoss,getCombat:()=>combat,getDog:()=>dogSystem,setShake:value=>shake=value,
-    setVolume:value=>{masterVolume=value;soundscape?.setVolume(value);},setAudioMix:(music,effects)=>soundscape?.setMix(music,effects),pauseMusic:()=>soundscape?.setActive(false),resumeMusic:()=>soundscape?.setActive(true)});
-  combat=new CombatSystem({scene,camera,dog,player,colliders:solidColliders,props:objects,enemies:chaosBots,getBoss:()=>melzinhaBoss,
-    settings:()=>experience.settings,active:canAct,time:()=>state.time,getAudio:()=>audioContext,getAudioEngine:()=>soundscape,getVolume:()=>masterVolume,toast:showToast,reward:value=>experience.reward(value),damageBoss,hitProp,onKill:enemyKilled});
-  dogSystem=new DogSystem({scene,hero:dog,player,enemies:chaosBots,navigation,combat,toast:showToast});
-  shop=createShop({state,roundState,combat,dog:dogSystem,legacyUpgrades:upgrades,buyLegacy:buy,toast:showToast,updateUI});
-  experience.bind();
-  $('mapZoomIn').onclick=()=>{minimapRange=Math.max(18,minimapRange-7);drawHudMap();};
-  $('mapZoomOut').onclick=()=>{minimapRange=Math.min(60,minimapRange+7);drawHudMap();};
-  drawHudMap();
+function mapData(){return {player,colliders,enemies,collectibles:[],companion,ammo:[],round:director?.round||1,world,interactions:world.interactions.filter(i=>!usedInteractions.has(i.id)),bossZones:world.bossZones,quest};}
+function drawMiniMap(){drawTacticalMap(ui.miniMap,mapData(),76);}
+function drawHudMap(){drawTacticalMap($('hudMap'),mapData(),mapRange);}
+function updateUI(){
+  const hud=director?.getHUD();if(hud){Object.assign(roundState,{round:hud.round,kills:hud.kills,target:hud.target,active:hud.phase==='combat',cooldown:hud.countdown});ui.roundNumber.textContent=String(hud.round).padStart(2,'0');ui.roundStatus.textContent=hud.phase==='combat'?`${hud.remaining} RESTANTES`:hud.phase==='choice'?'ESCOLHA SUA BUILD':`${hud.phase==='preparation'?'PREPARE-SE':'RESPIRA'} · ${Math.ceil(hud.countdown)}s`;ui.roundFill.style.width=`${hud.target?hud.kills/hud.target*100:0}%`;runUI.update(hud);}
+  state.region=world.district(player.pos);ui.regionName.textContent=state.region;ui.level.textContent=state.level;ui.xpFill.style.width=`${state.xp/(80+state.level*35)*100}%`;ui.xpLabel.textContent=`${state.xp} / ${80+state.level*35}`;ui.drawerCoins.textContent=state.coins.toLocaleString('pt-BR');ui.cosmic.textContent=meta.state.shards;ui.multiplier.textContent=`×${(director?.modifiers.reward||1).toFixed(1)}`;ui.puppyCount.textContent='Faro';ui.power.textContent=Math.round(combat.arsenal.stats().damage);ui.powerName.textContent='dano';
+  $('maxHealth').textContent=player.maxHealth;$('shieldStatus').textContent=player.shield>0?`+${Math.ceil(player.shield)} escudo`:player.downed?`${Math.ceil(player.downTimer)}s para levantar`:'';
+  ui.objectiveTitle.textContent=challenge?'Segure o relé':quest?'Entrega no Mirante':director?.round>=5?'Desafie o boss':'Abra caminho pelo morro';ui.objectiveText.textContent=challenge?`${Math.ceil(challenge.time)}s · permaneça no raio de 14m`:quest?'Leve a peça até a parte alta do mapa.':'Explore os baús, use a forja e abra os atalhos. As estrelas no mapa indicam bosses.';ui.objectiveProgress.textContent=state.region;ui.objectiveFill.style.width=challenge?`${(1-challenge.time/30)*100}%`:'0%';
+  for(const event of meta.drainNotifications()){toast(event.kind==='shards'?`+${event.amount} fragmentos · ${event.name}`:`Desbloqueado: ${event.name}`);playSound('unlock');}
+  drawHudMap();if(!ui.miniMap.closest('[hidden]'))drawMiniMap();
 }
 function resize(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);}
 function animate(){
-  requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);
-  if(canAct()){
-    state.time+=dt;soundscape?.update(dt,{moving:player.moveVelocity.length()>1,onGround:player.onGround,enemies:chaosBots.filter(e=>!e.disabled&&dist(e.g.position,player.pos)<20).length,round:roundState.round});dogMixer?.update(dt);combat.beginFrame(dt);playerUpdate(dt);
-    terrainTick-=dt;if(terrainTick<=0){updateTerrain();settleContent();terrainTick=.5;}
-    updateWeather(dt);cameraUpdate(dt);experience.tick(dt);worldUpdate(dt);
-    const worldDt=combat.effects.killPulse>0&&!experience.settings.reduceMotion?dt*.4:dt;
-    combatUpdate(worldDt);if(canAct()){dogSystem.update(worldDt,state.time);roundUpdate(dt);}combat.update(dt);if(canAct())updateAmmo(dt);
-    if(Math.floor(state.time*4)!==Math.floor((state.time-dt)*4))updateUI();
-  }else{experience.tick(dt);if(combat)combat.view.root.visible=false;}
+  requestAnimationFrame(animate);const raw=Math.min(timer.getDelta(),.05);
+  if(active()){
+    const dt=raw*(slowTime>0?.32:1);slowTime=Math.max(0,slowTime-raw);state.time+=dt;
+    navigation.beginFrame();
+    movePlayer(player,dt,{keys,world,navigation,upgrades:state.upgrades,modifiers:director.modifiers,bonuses});
+    if(!player.downed&&player.damageCooldown===0)player.health=Math.min(player.maxHealth,player.health+state.upgrades.regen*.38*dt);
+    hero.update(dt,state.time,player.moveVelocity.length());experience.updateCamera(dt);combat.beginFrame(dt);experience.tick(dt);
+    for(const enemy of enemies)updateEnemyAI(enemy,{dt,time:state.time,player,companion,peers:enemies,camera,navigation,aggression:director.modifiers.enemyAggression,hurtPlayer:hurt,hurtDog:amount=>companion.hurt(amount),fireRanged:(enemy,target)=>enemyProjectiles.fire(enemy,target),combat,spawn:(type,position)=>spawnEnemy({enemyType:type,roundEnemy:false,position})});
+    enemyProjectiles.update(dt);bosses.update(dt,state.time);companion.update(dt,state.time);combat.update(dt);loot.update(dt,state.time);updateExploration(dt);
+    for(let i=enemies.length-1;i>=0;i--)if(enemies[i].disabled&&(enemies[i].deathTime||0)>2){disposeEnemy(enemies[i]);enemies.splice(i,1);}
+    damageWindow+=dt;if(damageWindow>3){damageWindow=0;damageRecent*=.3;}
+    const current=combat.arsenal.current,stats=combat.arsenal.stats();director.update(dt,{healthRatio:player.health/player.maxHealth,ammoRatio:(current.magazine+current.reserve)/(stats.magazineSize+stats.maxReserve),enemiesAlive:alive().length,dps:damageRecent/3,position:player.pos,heading:player.cameraYaw});
+    if(player.downed){player.downTimer-=dt;if(player.downTimer<=0||(!player.secondWind&&!companion.rescuing))experience.endGame();}
+    if(lateChoice&&slowTime<=0){const choices=lateChoice;lateChoice=null;runUI.showChoices(choices);}
+    soundscape?.update(dt,{moving:player.moveVelocity.length()>1,onGround:player.onGround,enemies:alive().filter(e=>e.g.position.distanceTo(player.pos)<20).length,round:director.round,boss:bosses.activeBoss,event:director.event?.config,healthRatio:player.health/player.maxHealth,pressure:director.pressure});
+    uiClock+=dt;if(uiClock>.2){uiClock=0;updateUI();}
+  }else{experience.tick(raw);combat.view.root.visible=false;}
   renderer.render(scene,camera);
-}
-function playerUpdate(dt){
-  const forward=(keys.KeyW||keys.ArrowUp?1:0)-(keys.KeyS||keys.ArrowDown?1:0)-(keys.touchY||0),right=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0)+(keys.touchX||0);let x=Math.sin(player.cameraYaw)*forward-Math.cos(player.cameraYaw)*right,z=Math.cos(player.cameraYaw)*forward+Math.sin(player.cameraYaw)*right,len=Math.hypot(x,z);if(len>1){x/=len;z/=len;}const inputMoving=len>.08,baseSpeed=5.6+state.upgrades.speed*.42,speed=baseSpeed*(player.aiming?.64:1)*(player.dash>0?2.2+state.upgrades.dash*.12:1),desired=new THREE.Vector3(x*speed,0,z*speed),acceleration=inputMoving?(player.dash>0?22:22):20;player.moveVelocity.lerp(desired,1-Math.exp(-dt*acceleration));const moving=player.moveVelocity.lengthSq()>.18;if(moving||player.aiming){const target=player.aiming?player.cameraYaw:Math.atan2(player.moveVelocity.x,player.moveVelocity.z),delta=THREE.MathUtils.euclideanModulo(target-player.dir+Math.PI,Math.PI*2)-Math.PI;player.dir+=delta*Math.min(1,dt*(player.dash>0?24:15));}player.pos.addScaledVector(player.moveVelocity,dt);solidCollision(player.pos);player.dash=Math.max(0,player.dash-dt);player.dashCooldown=Math.max(0,player.dashCooldown-dt);player.fireCooldown=Math.max(0,player.fireCooldown-dt);player.barkCooldown=Math.max(0,player.barkCooldown-dt);player.firing=Math.max(0,player.firing-dt);player.damageCooldown=Math.max(0,player.damageCooldown-dt);player.health=Math.min(100,player.health+dt*state.upgrades.regen*.38);
-  if(player.onGround&&player.groundY>0&&!climbPoints.some(p=>Math.hypot(player.pos.x-p.x,player.pos.z-p.z)<p.radius+.18&&Math.abs(p.height-player.groundY)<.25)){player.onGround=false;player.velocity.y=-.3;}if(!player.onGround){player.velocity.y-=15*dt;player.pos.y+=player.velocity.y*dt;const landing=player.climbTarget;if(landing&&player.velocity.y<=0&&Math.hypot(player.pos.x-landing.x,player.pos.z-landing.z)<landing.radius+.65&&player.pos.y<=landing.height){player.pos.y=landing.height;player.groundY=landing.height;player.onGround=true;player.climbTarget=null;dust(player.pos,5,'#e0bd75');}else if(player.pos.y<=0){player.pos.y=0;player.groundY=0;player.onGround=true;player.climbTarget=null;dust(player.pos,4,'#e0bd75');}}
-  dog.position.copy(player.pos);dog.rotation.y=player.dir+Math.PI;const gait=moving?Math.sin(state.time*speed*3.3):Math.sin(state.time*2)*.05;dogParts.body.position.y=.62+(moving?Math.abs(gait)*.04:0);dogParts.legs.forEach((leg,i)=>leg.rotation.x=moving?Math.sin(state.time*speed*3.3+(i%2)*Math.PI)*.65:0);dogParts.tail.rotation.z=Math.sin(state.time*(moving?11:4))*.35;dogParts.ear0.rotation.x=Math.sin(state.time*7)*.11;dogParts.ear1.rotation.x=-Math.sin(state.time*7)*.11;dogParts.head.scale.setScalar(player.action==='bark'?1.12:1);if(dogParts.imported){dogParts.imported.position.y=dogParts.importBaseY+(moving?Math.abs(gait)*.035:0);dogParts.imported.rotation.z=moving?gait*.035:0;}if(player.actionUntil>0)player.actionUntil-=dt;else player.action='idle';
-  collectibles.forEach(c=>{if(c.userData.claimed)return;c.rotation.y+=dt*2;c.position.y=c.userData.baseY+Math.sin(state.time*3+c.userData.index)*.11;const d=dist(c.position,player.pos),radius=1.75+state.upgrades.magnet*.46;if(d<radius){if(state.upgrades.magnet&&d>.18)c.position.lerp(player.pos,.12+state.upgrades.magnet*.025);if(d<1.48)collect(c);}});
-}
-function worldUpdate(dt){
-  patrolCars.forEach(car=>{car.g.position.z+=car.direction*car.speed*dt;if(car.g.position.z>57||car.g.position.z<-57){car.direction*=-1;car.g.rotation.y=car.direction>0?0:Math.PI;}car.lights.forEach((light,i)=>light.material.emissiveIntensity=(Math.floor(state.time*8+i)%2?1.8:.2));});
-  updateBoss(dt);birdList.forEach(b=>{if(b.flying>0){b.flying-=dt;b.g.position.y+=dt*3;b.g.position.x+=Math.sin(b.phase+state.time*2)*dt*4;b.g.position.z+=dt*6;if(b.flying<=0){b.g.position.copy(b.home);b.g.position.y=.32;}}else b.g.position.y=.32+Math.sin(state.time*3+b.phase)*.05;});
-  for(let i=collectibles.length-1;i>=0;i--)if(collectibles[i].userData.claimed)collectibles.splice(i,1);
-  for(let i=objects.length-1;i>=0;i--)if(objects[i].userData.broken)objects.splice(i,1);
-  for(let i=projectiles.length-1;i>=0;i--){const p=projectiles[i];experience.resolveShot(p,dt);if(p.life<=0){disposeEffect(p.mesh);projectiles.splice(i,1);}}
-  for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.life-=dt;p.mesh.position.addScaledVector(p.vel,dt);p.vel.y-=8*dt;p.mesh.scale.setScalar(Math.max(0,p.life/p.max));p.mesh.material.opacity=Math.max(0,p.life/p.max);if(p.life<=0){disposeEffect(p.mesh);particles.splice(i,1);}}
-  if(state.time-lastEvent>45&&state.time>10){lastEvent=state.time;event();}
-}
-let hitFeedbackTimer=0;function confirmHit(color='#fff4b2',withSound=true){const shell=document.querySelector('.game-shell');shell.style.setProperty('--hit-color',color);shell.classList.remove('hit-confirm');void shell.offsetWidth;shell.classList.add('hit-confirm');clearTimeout(hitFeedbackTimer);hitFeedbackTimer=setTimeout(()=>shell.classList.remove('hit-confirm'),145);if(withSound)playSound('hit');}
-function disableBot(bot,amount){return combat.damage(bot,amount,{source:'weapon'});}
-function updateBoss(dt){const boss=melzinhaBoss;if(!boss)return;boss.aura.rotation.z+=dt*1.7;if(boss.defeated)return;const distance=dist(boss.g.position,player.pos);if(!boss.active){if(state.treats>=90&&distance<10){boss.active=true;boss.phase='telegraph';boss.timer=1.2;$('bossHud').hidden=false;showToast('MELZINHA acordou! Esquive das investidas.');}return;}boss.g.lookAt(player.pos.x,boss.g.position.y,player.pos.z);boss.hitCooldown=Math.max(0,boss.hitCooldown-dt);if(boss.phase==='telegraph'){boss.timer-=dt;boss.aura.scale.setScalar(1+Math.sin(state.time*16)*.22);if(boss.timer<=0){boss.phase='dash';boss.timer=.7;boss.dashDir.set(player.pos.x-boss.g.position.x,0,player.pos.z-boss.g.position.z).normalize();playSound('bark');}}else if(boss.phase==='dash'){boss.g.position.addScaledVector(boss.dashDir,10.5*dt);if(distance<1.65&&boss.hitCooldown<=0){boss.hitCooldown=.9;player.moveVelocity.addScaledVector(boss.dashDir,9);shake=.26;showToast('Investida da Melzinha! Dê dash para escapar.');}boss.timer-=dt;if(boss.timer<=0){boss.phase='recover';boss.timer=.85;}}else{boss.timer-=dt;if(boss.timer<=0){boss.phase='telegraph';boss.timer=.72;}}}
-function damageBoss(amount){const boss=melzinhaBoss;if(!boss||boss.defeated)return;boss.health=Math.max(0,boss.health-amount);$('bossFill').style.width=`${boss.health/boss.maxHealth*100}%`;dust(boss.g.position,8,'#ffb95f');playSound('bot');if(boss.health===0){boss.defeated=true;boss.active=false;$('bossHud').hidden=true;coins(1200);xp(300);showToast('Melzinha foi convencida pelo petisco lendário! Vitória no Morro.');}}
-function cameraUpdate(dt){experience.updateCamera(dt);shake=Math.max(0,shake-dt*.8);}
-function canAct(){return state.running&&!state.paused;}
-function jump(){if(!canAct()||!player.onGround)return;const power=state.upgrades.jump,target=climbPoints.filter(p=>p.height>player.groundY+.12&&p.height<=player.groundY+2.35+power*.42&&Math.hypot(player.pos.x-p.x,player.pos.z-p.z)<p.radius+1.8+power*.12).sort((a,b)=>a.height-b.height)[0];player.onGround=false;player.climbTarget=target||null;player.velocity.y=(target?10.4:9.2)+power*.8;player.action='jump';player.actionUntil=.42;playSound('dash');}
-function dash(){if(!canAct()||player.dashCooldown>0)return;if(player.moveVelocity.lengthSq()<.6)player.moveVelocity.set(Math.sin(player.cameraYaw)*8,0,Math.cos(player.cameraYaw)*8);player.dash=.34+state.upgrades.dash*.018;player.dashCooldown=Math.max(.28,1.05-state.upgrades.dash*.085);player.action='dash';player.actionUntil=.28;dust(player.pos,7,'#fff1be');playSound('dash');}
-function bark(){
-  if(!canAct()||player.barkCooldown>0)return;const level=state.upgrades.bark,range=3.4+level*.45;player.barkCooldown=Math.max(.7,2.1-level*.12);player.action='bark';player.actionUntil=.3;
-  combat.effects.sound('dog');combat.effects.nova(player.pos,'#e9cc9c',range);
-  for(const enemy of chaosBots)if(!enemy.disabled&&dist(enemy.g.position,player.pos)<range&&navigation.clearLine(player.pos,enemy.g.position,.1)){combat.damage(enemy,18+level*7,{source:'weapon'});enemy.stunTime=Math.max(enemy.stunTime,.45);}
-  for(const object of objects)if(!object.userData.broken&&dist(object.position,player.pos)<range)hitProp(object,24+level*8);
-  birdList.forEach(b=>{if(b.flying<=0&&dist(b.g.position,player.pos)<range){b.flying=2.5;state.birds++;}});
-}
-function barkShot(){experience.shoot();}
-function sniff(){if(!canAct())return;player.action='sniff';player.actionUntil=.6;playSound('collect');const near=collectibles.filter(c=>!c.userData.claimed).sort((a,b)=>a.position.distanceToSquared(player.pos)-b.position.distanceToSquared(player.pos)).slice(0,5);near.forEach(c=>{const r=mesh(new THREE.TorusGeometry(.7,.045,8,20),material('#ffe168'),c.position.x,.12,c.position.z);r.rotation.x=-Math.PI/2;r.castShadow=false;const start=performance.now();const go=t=>{const p=Math.min(1,(t-start)/1350);r.scale.setScalar(1+p*2);r.material.opacity=1-p;if(p<1)requestAnimationFrame(go);else disposeEffect(r);};requestAnimationFrame(go);});showToast(near.length?'O focinho aponta para petiscos brilhantes!':'Seu focinho diz: missão cumprida!');}
-function dig(){if(!canAct())return;const near=digSpots.find(d=>!d.userData.dug&&dist(d.position,player.pos)<2);if(!near){showToast('Procure um círculo escuro na areia para escavar.');return;}near.userData.dug=true;near.material.color.set('#6e4c32');player.action='dig';player.actionUntil=.7;playSound('dig');state.treasures++;coins(70+state.upgrades.dig*22);dust(near.position,11,'#b5854c');const bonus=treat(near.position.x+.6,near.position.z,1000+state.treasures);bonus.userData.baseY=.6;showToast('Tesouro desenterrado! + petiscos e um petisco.');progress();}
-function collect(c){if(c.userData.claimed)return;c.userData.claimed=true;state.treats++;const value=(c.userData.legendary?100:c.userData.rare?35:c.userData.healing?20:10)*(1+state.upgrades.luck*.12)*state.multiplier;coins(Math.round(value));xp(c.userData.legendary?100:c.userData.rare?35:12);if(c.userData.healing){const restored=22+state.upgrades.secret*3;player.health=Math.min(100,player.health+restored);dust(c.position,12,'#62ff9a');showToast(`PETISCO VERDE! +${restored} energia.`);}else dust(c.position,8,c.userData.legendary?'#d1a7ff':'#ffd764');state.missions[0].value=state.treats;playSound('collect');disposeEffect(c);if(c.userData.rare)showToast(c.userData.legendary?'PETISCO LENDÁRIO! Que faro.':'Petisco dourado! Que brilho.');progress();}
-function destroy(o){if(o.userData.broken)return;o.userData.broken=true;state.destroyed++;state.missions[1].value++;coins(Math.round((18+o.userData.required*7)*state.multiplier));xp(11);playSound('crash');dust(o.position,14,'#e48958');disposeEffect(o);for(let i=solidColliders.length-1;i>=0;i--)if(solidColliders[i].prop===o)solidColliders.splice(i,1);progress();}
-function dust(pos,n,color){for(let i=0;i<n;i++){const m=mesh(new THREE.BoxGeometry(.13+Math.random()*.14,.13+Math.random()*.14,.13+Math.random()*.14),new THREE.MeshBasicMaterial({color,transparent:true,opacity:1}),pos.x+(Math.random()-.5)*.5,pos.y+.3,pos.z+(Math.random()-.5)*.5);m.castShadow=false;particles.push({mesh:m,vel:new THREE.Vector3((Math.random()-.5)*4,1+Math.random()*4,(Math.random()-.5)*4),life:.45+Math.random()*.4,max:.85});}}
-function shockwave(pos){const ring=mesh(new THREE.TorusGeometry(.4,.08,8,32),new THREE.MeshBasicMaterial({color:'#fff2a5',transparent:true,opacity:.9}),pos.x,.12,pos.z);ring.rotation.x=-Math.PI/2;ring.castShadow=false;const start=performance.now(),go=t=>{const p=Math.min(1,(t-start)/450);ring.scale.setScalar(1+p*9);ring.material.opacity=1-p;if(p<1)requestAnimationFrame(go);else disposeEffect(ring);};requestAnimationFrame(go);}
-function dist(a,b){return Math.hypot(a.x-b.x,a.z-b.z);}function coins(n){state.coins+=n;experience?.reward(n);}function xp(n){state.xp+=n;while(state.xp>=state.level*100){state.xp-=state.level*100;state.level++;state.multiplier=1+Math.floor(state.level/5)*.1;showToast(`NÍVEL ${state.level}! Meyui Beuyi está mais caótico.`);if(state.level%5===0)state.power++;}}
-function progress(){state.missions[0].value=state.treats;state.missions[1].value=state.destroyed;state.missions[2].value=state.treasures;state.missions[3].value=state.birds;state.missions.forEach(m=>{if(m.value>=m.goal&&!m.complete){m.complete=true;coins(m.reward);showToast(`Missão concluída: +${m.reward} petiscos!`);}});objective();}
-function updateRoundUI(){
-  ui.roundNumber.textContent=String(roundState.round).padStart(2,'0');
-  if(roundState.active){const remaining=Math.max(0,roundState.target-roundState.kills);ui.roundStatus.textContent=`${roundState.special?'CHEFE · ':''}${remaining} INIMIGO${remaining===1?'':'S'} RESTANTE${remaining===1?'':'S'}`;ui.roundFill.style.width=`${Math.min(100,roundState.kills/roundState.target*100)}%`;}
-  else{ui.roundStatus.textContent=`${roundState.round===1?'PREPARE-SE':'PRÓXIMA ONDA'} · ${Math.max(0,Math.ceil(roundState.cooldown))}s`;ui.roundFill.style.width=`${Math.max(0,1-roundState.cooldown/(roundState.round===1?8:12))*100}%`;}
-}
-function startRound(){
-  const plan=wavePlan(roundState.round);roundState.active=true;roundState.kills=0;roundState.target=plan.target;roundState.special=plan.special;
-  plan.types.forEach((type,i)=>{const angle=i/plan.target*Math.PI*2+Math.random()*.15,radius=19+Math.random()*8;makeChaosBot(player.pos.x+Math.cos(angle)*radius,player.pos.z+Math.sin(angle)*radius,30000+roundState.round*101+i,null,type,roundState.round,true);});
-  experience.announce(plan.special?'REI DA SUCATA':'O BANDO DA LATA CHEGOU',`ROUND ${String(roundState.round).padStart(2,'0')}`,`${plan.target} inimigos · R recarrega · C chama o Faro`);updateRoundUI();
-}
-function roundUpdate(dt){
-  if(!roundState.active){roundState.cooldown-=dt;if(roundState.cooldown<=0)startRound();else updateRoundUI();return;}
-  if(roundState.kills>=roundState.target){
-    const plan=wavePlan(roundState.round);coins(plan.reward);xp(35+roundState.round*12);player.health=Math.min(100,player.health+20);dogSystem.health=Math.min(dogSystem.training.stats().health,dogSystem.health+25);
-    roundState.round++;roundState.active=false;roundState.cooldown=plan.rest;roundState.special=false;
-    const newlyUnlocked=WEAPONS.filter(w=>w.unlockRound===roundState.round);
-    playSound(newlyUnlocked.length?'unlock':'round');experience.announce('ROUND CONCLUÍDO',newlyUnlocked.length?'NOVO ARSENAL':'+20 DE VIDA',`+${plan.reward} petiscos${newlyUnlocked.length?` · ${newlyUnlocked.map(w=>w.name).join(',')} liberada · Tab para comprar`:' · Tab para evoluir · recolha a munição'}`);
-    spawnAmmo(player.pos.x-3,player.pos.z+3);spawnAmmo(player.pos.x+3,player.pos.z+3);updateRoundUI();
-  }
-}
-function recordRoundKill(){if(!roundState.active)return;roundState.kills++;updateRoundUI();}
-function objective(){if(state.treats<30){state.region='Praia do Petisco';ui.objectiveTitle.textContent='Encontre petiscos pela Praia';ui.objectiveText.textContent='Explore o calçadão e siga o brilho dourado.';ui.objectiveProgress.textContent=`${state.treats} / 30`;ui.objectiveFill.style.width=`${state.treats/30*100}%`;}else if(state.treats<60){state.region='Ruas da Confusão';ui.objectiveTitle.textContent='Desbloqueie as ruas';ui.objectiveText.textContent='Quebre objetos e encontre 60 petiscos.';ui.objectiveProgress.textContent=`${state.treats} / 60`;ui.objectiveFill.style.width=`${state.treats/60*100}%`;}else if(state.treats<90){state.region='Centro do Caos';ui.objectiveTitle.textContent='A cidade está aberta!';ui.objectiveText.textContent='Aventure-se rumo ao Morro do Mistério.';ui.objectiveProgress.textContent=`${state.treats} / 90`;ui.objectiveFill.style.width=`${state.treats/90*100}%`;}else{state.region='Morro do Mistério';ui.objectiveTitle.textContent='O segredo da Ilha do Osso';ui.objectiveText.textContent='Faltam poucos petiscos para o final lendário.';ui.objectiveProgress.textContent=`${state.treats} / 120`;ui.objectiveFill.style.width=`${state.treats/120*100}%`;}}
-function renderUpgrades(){shop?.render();}
-function buy(id){const u=upgrades.find(v=>v.id===id);if(!u)return;const cost=Math.round(u.base*Math.pow(1.52,state.upgrades[id]));if(state.coins<cost)return;state.coins-=cost;experience.reward(-cost);state.upgrades[id]++;experience.markPurchased(id);if(id==='force'&&state.power<state.upgrades.force)state.power=state.upgrades.force;showToast(`${u.title} melhorado! Meyui abana o rabinho.`);updateUI();renderUpgrades();}
-function renderMissions(){ui.missionList.innerHTML=state.missions.map(m=>`<article class="mission-item ${m.complete?'complete':''}"><h3>${m.title}</h3><p>${m.text}</p><div class="meter"><i style="width:${Math.min(100,m.value/m.goal*100)}%"></i></div><div class="mission-meta"><span>${Math.min(m.value,m.goal)} / ${m.goal}</span><span>● ${m.reward}</span></div></article>`).join('');}
-function openUpgradeModal(){experience.openDrawer('upgradeDrawer');}
-function closeUpgradeModal(){experience.closeModal();}
-function openDrawer(id){experience.openDrawer(id);}
-function prestige(){if(state.level<20)return;state.cosmic++;state.coins=250;state.level=1;state.xp=0;state.power=1;Object.keys(state.upgrades).forEach(k=>state.upgrades[k]=0);experience.clearPurchased();showToast('Prestígio Canino! Biscoito Cósmico ganho.');updateUI();}
-function event(){ui.eventText.textContent='CHUVA DE PETISCOS! Vá para o calçadão.';ui.eventBanner.classList.add('show');for(let i=0;i<10;i++){const c=treat(player.pos.x+(Math.random()-.5)*14,player.pos.z+(Math.random()-.5)*14,2000+i);c.position.y=1+Math.random()*3;c.userData.baseY=c.position.y;}setTimeout(()=>ui.eventBanner.classList.remove('show'),5000);}
-function updateUI(){if(dogSystem)drawHudMap();progressUI();ui.coins.textContent=state.coins.toLocaleString('pt-BR');ui.drawerCoins.textContent=state.coins.toLocaleString('pt-BR');ui.cosmic.textContent=state.cosmic;ui.level.textContent=state.level;ui.xpLabel.textContent=`${Math.floor(state.xp)} / ${state.level*100} XP`;ui.xpFill.style.width=`${state.xp/(state.level*100)*100}%`;ui.treats.textContent=state.treats;ui.health.textContent=Math.ceil(player.health);ui.healthFill.style.width=`${player.health}%`;ui.puppyCount.textContent=state.puppies;ui.power.textContent=state.power;ui.powerName.textContent=state.power>=10?'— postes':state.power>=5?'— bancas':'— caixas';ui.multiplier.textContent=`x${state.multiplier.toFixed(1)}`;ui.regionName.textContent=worldDetails?.district(player.pos)||state.region;const icons={sol:'☀',chuva:'🌧',neve:'❄',lava:'🌋',vento:'🍃',furacao:'🌀',tsunami:'🌊'};ui.weatherIcon.textContent=icons[state.weather]||'☀';const p=$('prestigeButton');p.disabled=state.level<20;p.textContent=state.level>=20?'PRESTIGIAR':'INDISPONÍVEL';}
-function progressUI(){state.missions[0].value=state.treats;state.missions[1].value=state.destroyed;state.missions[2].value=state.treasures;state.missions[3].value=state.birds;objective();}
-function format(n){if(n>=1e12)return(n/1e12).toFixed(1)+'T';if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return Math.floor(n).toString();}function showToast(text){ui.toast.textContent=text;ui.toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>ui.toast.classList.remove('show'),2200);}
-function fireConfetti(bot){
-  const origin=bot.g.position.clone();origin.y+=1.3*bot.config.scale;const dir=player.pos.clone().add(new THREE.Vector3(0,.7,0)).sub(origin).normalize();
-  const ball=mesh(new THREE.SphereGeometry(.11,7,5),new THREE.MeshBasicMaterial({color:'#d5a191'}),origin.x,origin.y,origin.z);ball.castShadow=false;
-  enemyProjectiles.push({mesh:ball,dir,speed:10.5,life:2,damage:bot.config.damage});
-}
-function hurtMeyui(amount,from){
-  if(!canAct()||player.damageCooldown>0||player.dash>0)return;
-  const damage=Math.max(1,Math.round(amount/(1+state.upgrades.armor*.18)));
-  player.health=Math.max(0,player.health-damage);player.damageCooldown=.65;experience.damage();playSound('hurt');dust(player.pos,5,'#df866b');
-  if(from)player.moveVelocity.addScaledVector(from,1.8);
-  ui.health.textContent=Math.ceil(player.health);ui.healthFill.style.width=`${player.health}%`;
-  if(player.health<=0)experience.endGame();
-}
-function faceHealthBar(entity,bar){const localParentRotation=entity.g.getWorldQuaternion(new THREE.Quaternion()).invert();bar.g.quaternion.copy(localParentRotation.multiply(camera.quaternion));}
-function withinTwoChunks(position){const playerChunkX=Math.floor(player.pos.x/CHUNK_SIZE),playerChunkZ=Math.floor(player.pos.z/CHUNK_SIZE),entityChunkX=Math.floor(position.x/CHUNK_SIZE),entityChunkZ=Math.floor(position.z/CHUNK_SIZE);return Math.abs(entityChunkX-playerChunkX)<=CHUNK_RADIUS&&Math.abs(entityChunkZ-playerChunkZ)<=CHUNK_RADIUS;}
-function updateActionHint(){
-  const partner=friendlyDogs.find(d=>!d.paired&&dist(d.g.position,player.pos)<2.8),digging=digSpots.find(d=>!d.userData.dug&&dist(d.position,player.pos)<2),near=objects.find(o=>!o.userData.broken&&state.power>=o.userData.required&&dist(o.position,player.pos)<2.5);
-  const text=partner?'[ G ] Fazer um novo amigo':digging?'[ F ] Escavar tesouro':near&&!player.aiming?'[ E ] Soltar um latido sísmico':'';
-  if(ui.actionHint.textContent!==text)ui.actionHint.textContent=text;
-  ui.actionHint.classList.toggle('show',Boolean(text));
-}
-function combatUpdate(dt){
-  for(let i=chaosBots.length-1;i>=0;i--){
-    const enemy=chaosBots[i];
-    if(enemy.roundEnemy&&!enemy.disabled&&dist(enemy.g.position,player.pos)>80){const angle=enemy.seed;const position=new THREE.Vector3(player.pos.x+Math.cos(angle)*30,0,player.pos.z+Math.sin(angle)*30);navigation.freePosition(position,.6*enemy.config.scale);enemy.g.position.copy(position);enemy.path=null;enemy.attackCooldown=2;}
-    updateEnemyAI(enemy,{dt,player,companion:dogSystem,navigation,peers:chaosBots,hurtPlayer:hurtMeyui,hurtDog:amount=>dogSystem.hurt(amount),fireRanged:fireConfetti,camera,time:state.time});
-    if(enemy.disabled&&enemy.deathTime>1.8){disposeEnemy(enemy);chaosBots.splice(i,1);}
-  }
-  for(let i=enemyProjectiles.length-1;i>=0;i--){
-    const shot=enemyProjectiles[i];shot.life-=dt;const cover=combat.hitWorld.surfaces(shot.mesh.position,shot.dir,shot.speed*dt);
-    if(cover){shot.life=0;shot.mesh.position.copy(cover.point);}else shot.mesh.position.addScaledVector(shot.dir,shot.speed*dt);
-    if(shot.life>0&&dist(shot.mesh.position,player.pos)<.72&&Math.abs(shot.mesh.position.y-(player.pos.y+.65))<.85){hurtMeyui(shot.damage||7,shot.dir);shot.life=0;}
-    if(shot.life<=0){disposeEffect(shot.mesh);enemyProjectiles.splice(i,1);}
-  }
-  friendlyDogs.forEach(friend=>{if(!friend.paired){friend.g.position.y=Math.sin(state.time*3+friend.seed)*.025;friend.g.rotation.y=Math.sin(state.time*.7+friend.seed)*.2;}});
-  puppyGang.forEach(pup=>{const angle=pup.index*2.4,target=player.pos.clone().add(new THREE.Vector3(Math.cos(angle)*2,0,Math.sin(angle)*2));target.y=.06;navigation.move(pup,target,6,dt,.2);pup.attackCooldown-=dt;const enemy=chaosBots.find(e=>!e.disabled&&dist(e.g.position,pup.g.position)<2&&navigation.clearLine(pup.g.position,e.g.position,.1));if(enemy&&pup.attackCooldown<=0){pup.attackCooldown=1.6;combat.damage(enemy,7,{source:'dog'});combat.effects.burst(enemy.g.position,'#d5c394',2,.5);}});
-  updateActionHint();
-}
-function mapState(){return {player,colliders:solidColliders,enemies:chaosBots,collectibles,companion:dogSystem,ammo:ammoPickups,round:roundState.round};}
-function drawMiniMap(){drawTacticalMap(ui.miniMap,mapState(),62);}
-function drawHudMap(){drawTacticalMap($('hudMap'),mapState(),minimapRange);}
-function disposeEffect(group){group.removeFromParent();const materials=new Set();group.traverse(node=>{node.geometry?.dispose();if(node.material){for(const material of Array.isArray(node.material)?node.material:[node.material])materials.add(material);}});materials.forEach(material=>material.dispose());}
-function settleContent(){
-  for(const object of objects){if(object.userData.broken||object.userData.navRegistered)continue;object.userData.navRegistered=true;if(dist(object.position,player.pos)<3)object.position.x+=5;navigation.freePosition(object.position,.9);object.updateWorldMatrix(true,true);const box=new THREE.Box3().setFromObject(object),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());solidColliders.push({x:center.x,z:center.z,width:size.x,depth:size.z,height:box.max.y,prop:object,owner:object.userData.chunkKey||null});object.userData.shotBounds=box;}
-  for(const enemy of chaosBots)if(!enemy.placed){navigation.freePosition(enemy.g.position,.5*enemy.config.scale);enemy.placed=true;}
-  for(const collectible of collectibles)if(!collectible.userData.claimed&&!collectible.userData.placed){navigation.freePosition(collectible.position,.65);collectible.userData.placed=true;}
-}
-function hitProp(object,damage){if(object.userData.broken)return;object.userData.health=(object.userData.health??30)-damage;if(object.userData.health<=0)destroy(object);else combat.effects.burst(object.position.clone().add(new THREE.Vector3(0,.5,0)),'#bea07d',2,.8);}
-function enemyKilled(enemy){
-  totalKills++;coins(enemy.config.reward);xp(enemy.type==='captain'?90:14);if(enemy.roundEnemy)recordRoundKill();if(totalKills%4===0)spawnAmmo(enemy.g.position.x,enemy.g.position.z);
-}
-function spawnAmmo(x,z){
-  if(ammoPickups.length>=10){const oldest=ammoPickups.shift();disposeEffect(oldest.g);}
-  const position=new THREE.Vector3(x,0,z);navigation.freePosition(position,.5);const g=new THREE.Group();g.position.copy(position);g.position.y=.45;
-  mesh(new THREE.BoxGeometry(.55,.35,.4),material('#749a86'),0,0,0,1,g);mesh(new THREE.BoxGeometry(.59,.06,.44),material('#e3c78b'),0,.2,0,1,g);for(let i=0;i<3;i++)mesh(new THREE.CylinderGeometry(.035,.035,.22,6),material('#e9c985'),-.13+i*.13,.3,0,1,g);
-  scene.add(g);ammoPickups.push({g,age:0});
-}
-function updateAmmo(dt){
-  for(let i=ammoPickups.length-1;i>=0;i--){const pickup=ammoPickups[i];pickup.age+=dt;pickup.g.rotation.y+=dt*.8;pickup.g.position.y=.45+Math.sin(state.time*2+i)*.06;
-    if(dist(pickup.g.position,player.pos)<1.8){const amount=combat.arsenal.addAmmo(1.5);if(amount>0){combat.effects.sound('reload-end');showToast(`+${amount} munições · reserva abastecida`);disposeEffect(pickup.g);ammoPickups.splice(i,1);combat.updateHUD();}}else if(pickup.age>90){disposeEffect(pickup.g);ammoPickups.splice(i,1);}}
 }
 setup();

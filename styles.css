@@ -26,5 +26,13 @@
 @media(max-width:700px){.weapon-hud{width:145px}.weapon-hud>b{font-size:19px}.ammo-line>strong{font-size:35px}.weapon-hud>p{display:none}.dog-hud{bottom:151px;width:145px}.snack-hud{bottom:229px}.ability-hud{bottom:153px}.powerup-hud{max-width:90%;bottom:112px}.onboarding{bottom:205px;width:65%;font-size:8px}.toast{bottom:207px}.weapon-catalog,.training-grid,.weapon-mods{grid-template-columns:1fr}.shop-section-title{align-items:flex-start;flex-direction:column}.shop-tabs button{flex:1;padding:10px}.dog-shop-intro{flex-wrap:wrap}.dog-shop-intro .supply-button{margin:0}.dog-shop-emblem{display:none}.action-hint{bottom:270px}}
 @media(pointer:coarse){.dog-hud{bottom:115px}.snack-hud{bottom:286px}.ability-hud{display:none}.mobile-actions{bottom:166px}.powerup-hud{bottom:92px}.weapon-hud{bottom:22px}}
 .fixed-minimap{position:absolute;top:93px;right:var(--edge);width:164px;pointer-events:auto}.fixed-minimap canvas{width:100%;height:auto;display:block;box-shadow:0 6px 20px #0d242332;border-radius:10px}.fixed-minimap>div{display:flex;align-items:center;gap:5px;margin-top:6px}.fixed-minimap span{font:500 8px var(--display);letter-spacing:.15em;color:#d8d8bd;margin-right:auto;text-shadow:0 2px 4px #09282c}.fixed-minimap button{width:22px;height:21px;background:#19363bd9;color:#e1d7b8;border:1px solid #acb7a14d;border-radius:3px;font-size:13px;padding:0}.fixed-minimap button:hover{background:#486455}.perk-more{font:600 16px var(--display);color:var(--gold)}.ability-hud{bottom:198px}.weapon-hud{background:linear-gradient(0deg,#14262570,transparent);padding:9px 0 0 18px;box-sizing:content-box}.onboarding{max-width:420px;justify-content:center;flex-wrap:wrap}.powerup-slots{flex-wrap:wrap;justify-content:center;max-height:92px;overflow:hidden}#miniMap{border-radius:10px}
-@media(max-width:1000px){.fixed-minimap{width:136px;top:87px}.ability-hud{bottom:183px}.weapon-hud{width:155px}.powerup-hud{max-width:calc(100% - 440px)}}
+@media(max-width:1000px){.fixed-minimap{width:136px;top:87px}.ability-hud{bottom:213px}.weapon-hud{width:155px}.powerup-hud{max-width:calc(100% - 440px)}}
 @media(max-width:700px){.fixed-minimap{width:112px;top:83px}.ability-hud{bottom:183px}.weapon-hud{width:130px}.powerup-hud{max-width:85%;bottom:116px}.powerup-slots{max-height:38px}.fixed-minimap span{font-size:7px}.onboarding{max-width:290px}}
+/* Keep combat information in distinct visual groups. */
+.ability-hud{bottom:222px}
+.weapon-hud>span{max-width:220px;display:block;line-height:1.4;font-size:8px;letter-spacing:.12em}
+.shield-status{display:block;color:#9fe0db;font:600 11px var(--display);margin:3px 0}
+.shield-status:empty{display:none}
+.boss-hud>small{display:block;font:500 10px var(--display);color:#e5d6ba;margin-top:3px}
+.action-hint{max-width:calc(100% - 40px);white-space:normal;text-align:center}
+@media(max-width:700px){.ability-hud{bottom:202px}.weapon-hud>span{font-size:7px;max-width:155px}}
