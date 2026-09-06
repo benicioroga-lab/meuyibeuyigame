@@ -96,6 +96,7 @@ func _run() -> void:
 	await _check_pending_and_restore()
 	await _check_pickup_feedback()
 	await _check_challenge_and_ground()
+	await _check_expansion_challenges()
 	finished = true
 	print("EXPLORATION_INTEGRATION checks=%d failures=%d" % [checks, failures.size()])
 	game.queue_free()
@@ -465,6 +466,31 @@ func _aim(at: Vector3, point: Vector3) -> void:
 	game.player.global_position = at
 	game.player.camera.position = Vector3(0, 1.55, 0)
 	game.player.camera.look_at(point)
+
+func _check_expansion_challenges() -> void:
+	for id: String in ["desafio_nascente", "desafio_cinema"]:
+		var poi: Dictionary = {}
+		for candidate: Dictionary in game.world.points_of_interest:
+			if candidate.id == id: poi = candidate
+		game.world.unlock_region(poi.region_id)
+		await physics_frame
+		await physics_frame
+		_aim(poi.position + Vector3(0, 0.05, 2), poi.position + Vector3.UP)
+		exploration.interact()
+		_check(exploration.challenge.get("id", "") == id, "Authored district challenge starts from physical E interaction: " + id)
+		_check(exploration.challenge.get("name", "") == str(poi.name).to_upper() and exploration.challenge.get("target", 0) == poi.target and exploration.challenge.get("remaining", 0) == poi.duration, "Challenge uses its authored name, goal and time")
+		var enemy := Node3D.new()
+		game.add_child(enemy)
+		enemy.global_position = Vector3.ZERO
+		exploration.on_kill(enemy)
+		_check(exploration.challenge.get("kills", -1) == 0, "Kills outside the district do not complete its challenge")
+		enemy.global_position = poi.position
+		var coins_before := game.coins
+		for index in range(int(poi.target)): exploration.on_kill(enemy)
+		_check(exploration.challenge.is_empty() and game.coins > coins_before, "Completing the local objective pays run currency")
+		_check(exploration.drops.size() == 1 and exploration.drops[0].payload.rarity == "epic", "The new objective produces a real epic weapon drop")
+		enemy.queue_free()
+		await _clear()
 
 func _weapon(rarity: String) -> Dictionary:
 	item_seed += 1

@@ -1,7 +1,8 @@
 extends Node3D
 class_name MeyuiWorld
 
-## Morro do Vento, after the rain: six districts with physical circulation.
+## Morro do Vento, after the rain: nine districts with physical circulation.
+const Expansion = preload("res://scripts/world_expansion.gd")
 var game: Node
 var spawn_position := Vector3(0, 0.25, 17)
 var menu_camera_position := Vector3(3.8, 4.3, 23.5)
@@ -91,9 +92,11 @@ func _ready() -> void:
 	_geometry = Node3D.new()
 	_geometry.name = "PhysicalNeighborhood"
 	navigation_region.add_child(_geometry)
+	Expansion.register(self)
 	_build_lighting()
 	_build_routes()
 	_build_architecture()
+	Expansion.new().build(self)
 	_build_interactables()
 	_build_rain()
 	call_deferred("_bake_navigation")
@@ -114,6 +117,8 @@ func _bake_navigation() -> void:
 	mesh.cell_size = 0.2
 	mesh.cell_height = 0.05
 	mesh.region_min_size = 1
+	# Monotone regions keep stacked shop floors and long interior ramps manifold.
+	mesh.sample_partition_type = NavigationMesh.SAMPLE_PARTITION_MONOTONE
 	mesh.geometry_parsed_geometry_type = NavigationMesh.PARSED_GEOMETRY_STATIC_COLLIDERS
 	mesh.geometry_collision_mask = 1
 	NavigationServer3D.map_set_cell_size(get_world_3d().navigation_map, mesh.cell_size)
@@ -240,6 +245,9 @@ func _has_region(id: String) -> bool:
 	return false
 
 func get_region_id(p: Vector3) -> String:
+	if p.x >= 24 and p.z >= 24: return "shopping"
+	if p.x >= 30 and p.z >= -14 and p.z < 24: return "cinema"
+	if p.z >= 26: return "parque"
 	# Height is part of district identity, including the gallery beneath the roof walk.
 	if p.y < -1.3 and p.z < -16:
 		return "galeria"
@@ -262,6 +270,7 @@ func district(p: Vector3) -> String:
 
 func height_at(x: float, z: float) -> float:
 	# Used for exterior placement only; actor movement always uses real physics.
+	if z >= 26 or (x >= 30 and z >= -14): return 0
 	if x >= 7.4 and x <= 12.6 and z <= 14 and z >= -2:
 		return (14 - z) * 0.25
 	if x >= -26.5 and x <= -21.5 and z <= -15.5 and z >= -31:
@@ -281,17 +290,25 @@ func height_at(x: float, z: float) -> float:
 func get_spawn_near(player_position: Vector3, min_distance: float = 12) -> Vector3:
 	var available: Array[Vector3] = []
 	var same_level: Array[Vector3] = []
+	var local_district: Array[Vector3] = []
+	var player_district := get_region_id(player_position)
 	for point: Vector3 in spawn_points:
 		if not unlocked_regions.has(get_region_id(point)):
 			continue
 		if point.distance_to(player_position) >= min_distance:
 			available.append(point)
+			if get_region_id(point) == player_district: local_district.append(point)
 			if absf(point.y - player_position.y) < 2.5:
 				same_level.append(point)
-	if not same_level.is_empty():
-		return same_level[randi() % same_level.size()]
-	if not available.is_empty():
-		return available[randi() % available.size()]
+	var pool := local_district if not local_district.is_empty() else (same_level if not same_level.is_empty() else available)
+	if not pool.is_empty():
+		# The expanded footprint must not turn the end of a wave into a long wait.
+		var nearest := INF
+		for point: Vector3 in pool: nearest = minf(nearest, point.distance_to(player_position))
+		var nearby: Array[Vector3] = []
+		for point: Vector3 in pool:
+			if point.distance_to(player_position) <= nearest + 12.0: nearby.append(point)
+		return nearby[randi() % nearby.size()]
 	# Even an impossible requested distance cannot select a locked district.
 	var farthest := spawn_position
 	var distance := -1.0
@@ -328,7 +345,8 @@ func _build_routes() -> void:
 	_ramp("EscadaDeServicoB", Vector3(-5, 4, -53), Vector3(-5, 8, -43), 4)
 	# Retaining walls and railings follow actual edges; narrow openings belong to routes.
 	_edge(Vector3(-12, 0, 11), Vector3(-12, 0, 25), 1.8)
-	_edge(Vector3(-12, 0, 25), Vector3(12, 0, 25), 1.8)
+	_edge(Vector3(-12, 0, 25), Vector3(-3, 0, 25), 1.8)
+	_edge(Vector3(3, 0, 25), Vector3(12, 0, 25), 1.8)
 	_edge(Vector3(12, 0, 25), Vector3(12, 0, 15), 1.8)
 	_edge(Vector3(-12, 0, 4), Vector3(7.4, 0, 4), 1.5)
 	_edge(Vector3(-31, 0, -15.5), Vector3(-31, 0, 7.5), 2.5)
@@ -340,7 +358,8 @@ func _build_routes() -> void:
 	_edge(Vector3(7, 4, -17), Vector3(7, 4, 5), 1.4)
 	_edge(Vector3(7, 4, 5), Vector3(7.4, 4, 5), 1.4)
 	_edge(Vector3(12.6, 4, 5), Vector3(28, 4, 5), 1.4)
-	_edge(Vector3(28, 4, 5), Vector3(28, 4, -13), 1.5)
+	_edge(Vector3(28, 4, 5), Vector3(28, 4, -4), 1.5)
+	_edge(Vector3(28, 4, -10), Vector3(28, 4, -13), 1.5)
 	_edge(Vector3(7, 4, -17), Vector3(8.7, 4, -17), 1.5)
 	_edge(Vector3(13.3, 4, -17), Vector3(24, 4, -17), 1.5)
 	_edge(Vector3(24, 4, -18), Vector3(29.5, 4, -18), 1.5)
@@ -426,7 +445,7 @@ func _build_architecture() -> void:
 	_house(Vector3(16.5, 0, 17), Vector3(6, 11.8, 9), BRICK, false)
 	_box("PatioCanopy", Vector3(-6.6, 3.8, 15.5), Vector3(5, 0.16, 7), RUST)
 	_sign("FERRO DO MORRO", Vector3(-6.0, 3.05, 17.1), 3.8)
-	_sign("LIGA DO RUÍDO", Vector3(1, 2.1, 24.78), 4.8, PI)
+	_sign("JARDIM  ↓", Vector3(-5.5, 2.1, 24.78), 3.8, PI)
 	_bench(Vector3(-3.8, 0, 21.6))
 	_bench(Vector3(3.5, 0, 6))
 	_puddle(Vector3(1.3, 0.022, 13.2), Vector2(4.8, 2.5))
@@ -448,10 +467,10 @@ func _build_architecture() -> void:
 	_puddle(Vector3(-25.5, 0.025, -10), Vector2(2.8, 4))
 	_lamp(Vector3(-26, 3.5, 3), WARM, 9)
 	_lamp(Vector3(-13.5, 2.8, -4), Color("83cad3"), 7)
-	# Workshop: usable interior with two open doors and a high mezzanine silhouette.
-	_room(Vector3(20.5, 4, -6), Vector2(11, 14), 4.3, "workshop")
-	_box("WorkshopBench", Vector3(23.7, 4.6, -6), Vector3(1.0, 1.2, 4.5), RUST, true)
-	for z: float in [-8, -6.5, -5]:
+	# Workshop: three exits, including the bridge to the cinema service stair.
+	_room(Vector3(20.5, 4, -6), Vector2(11, 14), 4.3, "workshop", true)
+	_box("WorkshopBench", Vector3(24, 4.6, -11), Vector3(1.0, 1.2, 2), RUST, true)
+	for z: float in [-11.6, -10.2, -8.8]:
 		_box("ToolBoard", Vector3(25.75, 6.2, z), Vector3(0.08, 1.1, 0.8), DARK)
 	_house(Vector3(17, 4, 3.5), Vector3(7, 7.4, 3), BRICK, false)
 	_sign("OFICINA SUSPENSA", Vector3(20, 7.3, 1.06), 5.5)
@@ -495,7 +514,7 @@ func _build_architecture() -> void:
 	_sign("QUADRA DO ECO", Vector3(25, 2.1, -54.77), 5)
 	_lamp(Vector3(34, 5.6, -49), Color("e3a091"), 12)
 	# Architectural density continues beyond the collision edges, without extra bodies.
-	for spec: Array in [[-36, 0, -7, 7, 14, 15], [-34, 1, -27, 6, 17, 12], [-18, 2, -50, 13, 12, 7], [21, 4, -25, 9, 14, 11], [42, 0, -40, 9, 18, 18], [4, 1, 31, 18, 9, 7], [-18, 0, 24, 7, 13, 10]]:
+	for spec: Array in [[-36, 0, -7, 7, 14, 15], [-34, 1, -27, 6, 17, 12], [-18, 2, -50, 13, 12, 7], [21, 4, -25, 9, 14, 11], [42, 0, -40, 9, 18, 18], [-25, 1, 31, 12, 9, 7], [-18, 0, 24, 7, 13, 10]]:
 		var p := Vector3(spec[0], spec[1], spec[2])
 		var size := Vector3(spec[3], spec[4], spec[5])
 		_box("BeyondTheDistrict", p + Vector3(0, size.y / 2, 0), size, BRICK.darkened(0.15))
@@ -506,11 +525,15 @@ func _build_architecture() -> void:
 	for p: Vector3 in [Vector3(-6, 0, 23), Vector3(-16, 0, 10), Vector3(26.5, 4, 2), Vector3(6, 8, -41)]:
 		_planter(p)
 
-func _room(center: Vector3, size: Vector2, height: float, label: String) -> void:
+func _room(center: Vector3, size: Vector2, height: float, label: String, east_exit: bool = false) -> void:
 	# Door gaps remain in collision; interiors are destinations, not facade textures.
 	_box(label + "Roof", center + Vector3(0, height, 0), Vector3(size.x, 0.25, size.y), DARK, true)
 	_box(label + "RearWall", center + Vector3(0, height / 2, -size.y / 2), Vector3(size.x, height, 0.3), PLASTER, true)
-	_box(label + "SideWall", center + Vector3(size.x / 2, height / 2, 0), Vector3(0.3, height, size.y), BRICK, true)
+	if east_exit:
+		for side: float in [-1.0, 1.0]:
+			_box(label + "EastDoorPier", center + Vector3(size.x / 2, height / 2, side * (size.y / 4 + 1)), Vector3(0.3, height, size.y / 2 - 2), BRICK, true)
+	else:
+		_box(label + "SideWall", center + Vector3(size.x / 2, height / 2, 0), Vector3(0.3, height, size.y), BRICK, true)
 	for side: float in [-1.0, 1.0]:
 		_box(label + "FrontPier", center + Vector3(side * (size.x / 4 + 0.75), height / 2, size.y / 2), Vector3(size.x / 2 - 1.5, height, 0.3), TEAL, true)
 		_box(label + "SidePier", center + Vector3(-size.x / 2, height / 2, side * (size.y / 4 + 0.9)), Vector3(0.3, height, size.y / 2 - 1.8), TEAL, true)
@@ -565,6 +588,7 @@ func _build_gates() -> void:
 	_gate("lajes", Vector3(16.7, 7.03, -36), 3.8, true, "porta_lajes_quadra")
 	_gate("quadra", Vector3(32, 0.3, -32.8), 5, false, "porta_quadra_oficina")
 	_gate("quadra", Vector3(27.4, 0.914, -36), 3.8, true, "porta_quadra_lajes")
+	Expansion.gates(self)
 	_apply_gate_state()
 
 func _gate(region_id: String, p: Vector3, width: float, along_z: bool, poi_id: String) -> void:
@@ -652,8 +676,8 @@ func _build_rain() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 417
 	for index in range(multi.instance_count):
-		var x := rng.randf_range(-34, 39)
-		var z := rng.randf_range(-59, 29)
+		var x := rng.randf_range(-34, 74)
+		var z := rng.randf_range(-59, 76)
 		if index < 200:
 			x = rng.randf_range(-7, 12)
 			z = rng.randf_range(5, 25)
@@ -663,6 +687,10 @@ func _build_rain() -> void:
 			base = 8.5
 		if x < -10 and x > -18 and z > -7 and z < 1:
 			base = 4.0
+		if x >= 24 and z >= 24: base = 10.2
+		elif x >= 30 and z >= -14: base = 8.4
+		elif x > -13 and x < -3 and z > 56 and z < 66: base = 4.3
+		elif x > 11 and x < 15 and z > 64 and z < 69: base = 3.2
 		multi.set_instance_transform(index, Transform3D(Basis.IDENTITY, Vector3(x, base, z)))
 		multi.set_instance_custom_data(index, Color(rng.randf(), 0, 0, 1))
 	var shader := Shader.new()
@@ -672,7 +700,7 @@ func _build_rain() -> void:
 	material.shader = shader
 	rain.multimesh = multi
 	rain.material_override = material
-	rain.custom_aabb = AABB(Vector3(-38, -3, -62), Vector3(83, 37, 95))
+	rain.custom_aabb = AABB(Vector3(-38, -3, -62), Vector3(120, 45, 142))
 	add_child(rain)
 
 func _material(color: Color, emission: float = 0) -> StandardMaterial3D:

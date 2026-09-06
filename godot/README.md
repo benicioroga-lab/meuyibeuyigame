@@ -39,7 +39,7 @@ Os portões podem ser comprados **pelos dois lados**, inclusive se você estiver
 - **Loot e armas:** 10 modelos em 10 famílias, 6 raridades, 7 fabricantes fictícios, rolls por instância e 20 modificadores comportamentais. As 20 peças de attachment ocupam cinco slots: mira, cano, underbarrel, pente e internos. Comparação contextual no chão, mochila com favoritos/lixo, ordenação, autoequipar, venda e desmontagem.
 - **Build e economia:** 12 perks e refinamento de armas sem teto fixo de compras, além de rerolls de atributo, elemento, modificador, attachment e fabricante. Custos aumentam; velocidade e resistência têm retornos decrescentes. Petiscos financiam a run; materiais vêm da desmontagem. Sigilos, registros e especializações de Faro persistem no perfil.
 - **Faro:** quatro especializações — combatente, coletor, apoio e guardião — e quatro ramos de evolução: ataque, sobrevivência, loot e apoio. Compras continuam além dos níveis iniciais, com limites de velocidade/cadência para preservar o combate. Equipamento visual acompanha a evolução; coleta, cura, escudo e resgate dependem da build.
-- **Mundo:** seis regiões conectadas, entre o subterrâneo a −4 m e as lajes a +8 m: Pátio do Farol, Beco das Marés, Oficina Suspensa, Galeria da Chuva, Lajes do Sinal e Quadra do Eco. Noite, chuva, neblina e luzes urbanas, com interiores, escadas, rampas, portões compráveis, baús, reservas escondidas, comerciantes e desafios. A navegação usa a física e o NavigationServer3D da Godot.
+- **Mundo:** nove regiões conectadas, entre o subterrâneo a −4 m e as lajes a +8 m: Pátio do Farol, Beco das Marés, Oficina Suspensa, Galeria da Chuva, Lajes do Sinal, Quadra do Eco, Jardim das Nascentes, Shopping Aurora e Cine Última Luz. Noite, chuva, neblina e luzes urbanas, com interiores, escadas, rampas, portões compráveis, baús, reservas escondidas, comerciantes e desafios. A navegação usa a física e o NavigationServer3D da Godot.
 - **Hordas:** 11 arquétipos comuns/especiais, 3 modificadores de elite e 3 bosses com padrões distintos. A facção hostil é a fictícia **Liga do Ruído**. Rounds seguem sem um final programado, com composição progressiva, cinco dificuldades e Caos. O diretor limita a 24 inimigos simultâneos, dosa os spawns conforme recursos/pressão e oferece pausas de 8–12 segundos entre rounds.
 - **Eventos:** apagão, tempestade, invasão de elites, loot dobrado, suprimentos e caçada de boss. Sete power-ups temporários/imediatos complementam as recompensas da exploração e dos desafios.
 - **Interface:** menu principal, continuação, slots, configurações, extras, HUD contextual e bancada com previews de arma/Faro. Atributos avançados aparecem sob demanda, com ícones e comparação atual → próxima.
@@ -47,6 +47,20 @@ Os portões podem ser comprados **pelos dois lados**, inclusive se você estiver
 O Batedor começa com **22 de dano**: sem defesa, cinco golpes derrubam o jogador de 100 HP. Todo golpe de inimigo não boss recebe um teto de **40% da vida máxima**, aplicado antes da armadura e da proteção de Faro; essas melhorias continuam úteis em rounds altos. Arcos vermelhos indicam a origem dos ataques, com vinheta e aviso de vida crítica. Absorção total pelo escudo tem feedback distinto. A retaliação às mordidas de Faro tem duração e intervalo limitados, preservando a provocação própria da especialização guardião.
 
 No chão, munição aparece como caixa com cartuchos e armas têm silhuetas próprias por família. Aponte a mira para destacar o item e ver sua ficha: raridade, nível, fabricante, comparação de atributos e modificadores. A seleção acompanha a mira entre drops próximos; recolher usa **E**, exige proximidade e respeita obstáculos.
+
+## Jardim, shopping e cinema
+
+O novo circuito sai pelo portão ao sul do Pátio do Farol. Seguir pelas placas leva ao jardim, shopping e cinema, com retorno à Oficina Suspensa por uma escada de serviço. A oficina ganhou uma saída lateral física. Há **30 pontos de spawn, 37 pontos de interesse, 16 portões e 12 lances de escada/rampa** no mapa completo.
+
+| Região | Acesso | Exploração e utilidade |
+| --- | --- | --- |
+| Jardim das Nascentes | 120 petiscos · round 1 | Caminhos entre árvores, fonte, bancos, estufa envidraçada com baú, quiosque de compras e desafio **Defender a nascente**: 10 eliminações locais em 80 s. |
+| Shopping Aurora | 320 petiscos · round 2 | Átrio com cobertura, farmácia com estoque, arsenal, café com reserva, oficina de upgrades e cofre no mezanino. Duas escadas permitem circular entre os pisos por caminhos diferentes. |
+| Cine Última Luz | 480 petiscos · round 3 | Bilheteria com caixa, bomboniere, sala com poltronas e corredores laterais, palco acessível e arquivo com loot. Desafio **Última sessão**: 16 eliminações locais em 90 s. Saída de serviço para a oficina. |
+
+Os desafios usam a economia da run: recompensa de petiscos e arma épica ao completar. Baús e reservas voltam a ficar disponíveis após cinco rounds. A compra de uma região abre seus acessos correspondentes, inclusive ao chegar pelo lado contrário. Novas regiões começam fechadas em saves antigos, preservando as compras anteriores.
+
+Inimigos priorizam spawns próximos dentro do distrito do jogador para manter a pressão mesmo com a área maior. As superfícies internas têm colisão real; jogador, Faro e inimigos usam as mesmas escadas. Chuva fica acima das coberturas, e as opções de vegetação controlam folhas e grama sem remover troncos sólidos.
 
 ## Saves e configurações
 
@@ -69,13 +83,13 @@ Os ajustes são aplicados e salvos imediatamente, incluindo FOV durante a pausa.
 
 ## Organização e validação
 
-`data/` contém armas, loot, inimigos e evolução de Faro. `main.gd` coordena transações e a run; `inventory.gd` guarda as instâncias; `run_director.gd` controla hordas/eventos; `run_progression.gd` calcula perks. `world.gd` e `exploration.gd` cuidam das regiões/interações. `player.gd`, `enemy.gd` e `companion.gd` executam o combate. Save, validação, opções, áudio e interfaces possuem scripts próprios.
+`data/` contém armas, loot, inimigos e evolução de Faro. `main.gd` coordena transações e a run; `inventory.gd` guarda as instâncias; `run_director.gd` controla hordas/eventos; `run_progression.gd` calcula perks. `world.gd`, `world_expansion.gd` e `exploration.gd` cuidam das regiões/interações. A expansão registra regiões, serviços, spawns e portões na mesma estrutura do mundo; o validador de save reutiliza seus identificadores. `player.gd`, `enemy.gd` e `companion.gd` executam o combate. Save, validação, opções, áudio e interfaces possuem scripts próprios.
 
 Execute na pasta `godot`, informando o executável **console** da instalação:
 
 ```powershell
 $GodotExe = "C:\Godot\Godot_v4.7.2-stable_win64_console.exe"
-$tests = @('loot', 'loot_visuals', 'progression', 'director', 'weapons', 'actors', 'world', 'exploration', 'save', 'settings', 'settings_ui', 'expedition', 'ui', 'stress')
+$tests = @('loot', 'loot_visuals', 'progression', 'director', 'weapons', 'actors', 'world', 'map_expansion', 'exploration', 'save', 'settings', 'settings_ui', 'expedition', 'ui', 'stress')
 foreach ($test in $tests) {
 	& $GodotExe --headless --path . --script "res://tests/test_$test.gd"
 	if ($LASTEXITCODE -ne 0) { throw "Falha: $test" }
@@ -85,5 +99,13 @@ foreach ($test in $tests) {
 Esses testes cobrem modelos/rolls, conservação de munição, attachments/rerolls, efeitos de combate, navegação, Faro, progressão prolongada, recuperação de saves, configurações e integração da expedição/UI. `test_run.gd` é um alias de `test_expedition.gd`. `render_showcase.gd`, executado **sem `--headless`**, produz capturas para revisão visual em `test-output/`; testes automatizados não substituem jogar e avaliar ritmo, legibilidade e som.
 
 `test_settings_ui.gd -- --capture`, sem `--headless`, exercita os controles com a GPU e registra FOV/qualidade em `test-output/settings-regression/`. `render_combat_feedback.gd` registra fichas de loot e dano sofrido em `test-output/combat-feedback/`; acrescente `-- --large-ui` para repetir com interface em 1,3×. Todos usam saves e preferências de teste isolados.
+
+`test_world.gd` valida os destinos, pisos, portas nos dois sentidos e integridade da malha de navegação. `test_map_expansion.gd` percorre fisicamente os interiores com os controles do jogador e verifica saves novos/antigos. `test_stress.gd` também faz Faro e inimigos subirem/descerem as novas escadas. Para gerar oito capturas da expansão com a GPU:
+
+```powershell
+& $GodotExe --path . --script res://tests/render_map_expansion.gd
+```
+
+As imagens ficam em `test-output/map-expansion/`.
 
 `.godot/` e `test-output/` são caches/artefatos locais ignorados pelo Git. O protótipo web permanece na raiz do repositório; este projeto nativo tem sua própria execução e seus próprios saves.

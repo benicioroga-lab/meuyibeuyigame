@@ -100,7 +100,15 @@ func _test_live_level_navigation() -> void:
 		[Vector3(29.8, 0, -36), Vector3(13, 8, -36)],
 		[Vector3(-10, -4, -40), Vector3(2, 0, -40)],
 		[Vector3(2, 0, -40), Vector3(2, 4, -53)],
-		[Vector3(-5, 4, -53), Vector3(-5, 8, -43)]
+		[Vector3(-5, 4, -53), Vector3(-5, 8, -43)],
+		[Vector3(36, 0, 12), Vector3(36, 4, -7)],
+		[Vector3(36, 4, -7), Vector3(36, 0, 12)],
+		[Vector3(33, 0, 59), Vector3(33, 4.2, 34)],
+		[Vector3(33, 4.2, 34), Vector3(33, 0, 59)],
+		[Vector3(39, 0, 67), Vector3(63, 4.2, 67)],
+		[Vector3(63, 4.2, 67), Vector3(39, 0, 67)],
+		[Vector3(43, 0, -1), Vector3(45, 0.9, -10)],
+		[Vector3(45, 0.9, -10), Vector3(43, 0, -1)]
 	]
 	for index: int in range(flights.size()):
 		var begin: Vector3 = flights[index][0]

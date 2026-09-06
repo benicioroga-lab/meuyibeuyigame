@@ -222,8 +222,12 @@ func _scan() -> void:
 		var type: String = str(poi.get("type", ""))
 		if not _available(poi): continue
 		var distance: float = game.player.global_position.distance_to(at)
-		if distance < best and forward.dot((at + Vector3.UP - origin).normalized()) > 0.2 and _visible(at + Vector3.UP, type == "door"):
+		var alignment := 1.0 - forward.dot((at + Vector3.UP - origin).normalized())
+		# Adjacent gates must follow the reticle, including when standing between them.
+		var preferred := alignment < best_alignment - 0.001 or (absf(alignment - best_alignment) <= 0.001 and distance < best)
+		if distance < 3.4 and alignment < 0.28 and preferred and _visible(at + Vector3.UP, type == "door"):
 			best = distance
+			best_alignment = alignment
 			var terms := _door_terms(poi) if type == "door" else {"cost":maxi(0, int(poi.get("cost", 0))),"round":1}
 			target = {"kind":"poi", "poi":poi, "type":type, "name":poi.get("name", ""), "cost":terms.cost, "prompt":"E  INTERAGIR" + (" · ROUND %d" % int(terms.round) if game.round_number < int(terms.round) else "")}
 	_set_highlight(target.get("node") if target.get("kind") == "drop" else null)
@@ -382,8 +386,11 @@ func interact() -> void:
 	elif type == "boss":
 		game.start_boss(poi)
 	elif type == "challenge":
-		challenge = {"id":str(poi["id"]), "name":"SEGURE A ESQUINA", "region":str(poi.get("region_id", "patio")), "remaining":90.0, "kills":0, "target":12}
-		game.ui.announce("SEGURE A ESQUINA", "12 eliminações nesta região · 90 segundos")
+		var title := str(poi.get("name", "Segure a esquina")).to_upper()
+		var duration := float(poi.get("duration", 90))
+		var goal := int(poi.get("target", 12))
+		challenge = {"id":str(poi["id"]), "name":title, "region":str(poi.get("region_id", "patio")), "remaining":duration, "kills":0, "target":goal}
+		game.ui.announce(title, "%d eliminações nesta região · %d segundos" % [goal, int(duration)])
 		game.schedule_save()
 	_scan()
 

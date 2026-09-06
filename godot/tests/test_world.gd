@@ -31,6 +31,7 @@ func _run() -> void:
 		await _finish()
 		return
 	_map = _world.get_world_3d().navigation_map
+	_check_manifold_navigation()
 	NavigationServer3D.map_force_update(_map)
 	_start = NavigationServer3D.map_get_closest_point(_map, _world.spawn_position)
 	_check(_start.distance_to(_world.spawn_position) < 1.0, "Player spawn lies on native navigation")
@@ -39,12 +40,14 @@ func _run() -> void:
 		_check_destination(_world.spawn_points[index], "Enemy spawn %d" % index)
 	for shop: Dictionary in _world.shops:
 		_check_destination(shop["position"], "Shop %s" % shop["id"])
-	_check(_world.regions.size() == 6, "Six distinct districts exist")
+	_check(_world.regions.size() == 9, "Nine distinct districts exist")
 	for region: Dictionary in _world.regions:
 		_check(_world.get_region_id(region.center) == region.id, "District centers identify their region: " + region.id)
 		_check_destination(region.center, "District " + region.id)
 	for point: Dictionary in _world.points_of_interest:
 		_check_destination(point.position, "POI " + point.id)
+	for landmark: String in World.Expansion.LANDMARKS:
+		_check_destination(World.Expansion.LANDMARKS[landmark], "Interior " + landmark)
 	for index in range(100):
 		var spawn: Vector3 = _world.get_spawn_near(Vector3(50, 8, -80), 9999)
 		_check(_world.unlocked_regions.has(_world.get_region_id(spawn)), "Spawn fallback stays in an unlocked district")
@@ -72,6 +75,10 @@ func _run() -> void:
 			_check(gate.collider.disabled and not gate.node.visible, "Unlocked gate clears collision and mesh: " + region.id)
 			_check_gate_physics(gate, false)
 	_world.set_boss_arena(true)
+	for region: Dictionary in _world.regions:
+		for sample in range(12):
+			var spawn: Vector3 = _world.get_spawn_near(region.center, 8)
+			_check(_world.get_region_id(spawn) == region.id, "Local spawns retain combat pressure in " + region.id)
 	await physics_frame
 	await physics_frame
 	for gate: Dictionary in _world._gates["quadra"]:
@@ -94,6 +101,7 @@ func _run() -> void:
 		[Vector3(2, 0, -42), Vector3(2, 4, -52)],
 		[Vector3(-5, 4, -53), Vector3(-5, 8, -43)]
 	]
+	flights.append_array(World.Expansion.STAIRS)
 	for index in range(flights.size()):
 		var begin: Vector3 = flights[index][0]
 		var end: Vector3 = flights[index][1]
@@ -107,7 +115,7 @@ func _run() -> void:
 	_check(_world.import_state(initial_state), "Initial region state can be restored")
 	_check(_world.unlocked_regions.size() == 2, "A new run restores precisely two initial districts")
 	_check(_world.import_state(saved), "JSON save state restores opened districts")
-	_check(_world.unlocked_regions.size() == 6, "All six unlocked districts survive JSON persistence")
+	_check(_world.unlocked_regions.size() == 9, "All nine unlocked districts survive JSON persistence")
 	_check(not _world.import_state({"unlocked_regions": ["bogus"]}), "Invalid saved region identifiers are rejected")
 	_world.set_event("storm")
 	_check(_world._environment.fog_density > 0.01, "Storm materially changes fog")
@@ -147,6 +155,22 @@ func _check_gate_physics(gate: Dictionary, closed: bool) -> void:
 		_check((movement_hit.get("collider") == body) == closed, "Gate movement collision matches its state from both faces: " + gate.poi_id)
 		var ballistic_hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(from, to, 1))
 		_check(ballistic_hit.is_empty(), "Ballistic rays pass through the gate from either face: " + gate.poi_id)
+
+func _check_manifold_navigation() -> void:
+	var mesh: NavigationMesh = _world.navigation_region.navigation_mesh
+	var vertices := mesh.get_vertices()
+	var edges: Dictionary = {}
+	for index in range(mesh.get_polygon_count()):
+		var polygon := mesh.get_polygon(index)
+		for corner in range(polygon.size()):
+			var a := str(vertices[polygon[corner]].snapped(Vector3.ONE * 0.0001))
+			var b := str(vertices[polygon[(corner + 1) % polygon.size()]].snapped(Vector3.ONE * 0.0001))
+			var key := a + "|" + b if a < b else b + "|" + a
+			edges[key] = int(edges.get(key, 0)) + 1
+	var valid := true
+	for count: int in edges.values():
+		if count > 2: valid = false
+	_check(valid, "Stacked interiors bake without overlapping or non-manifold navigation edges")
 
 
 func _check_destination(target: Vector3, label: String) -> void:

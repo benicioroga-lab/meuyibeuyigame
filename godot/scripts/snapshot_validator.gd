@@ -1,7 +1,7 @@
 class_name MeyuiSnapshotValidator
 extends RefCounted
 ## Validate all nested containers before a live scene is replaced.
-const REGIONS := ["patio","mercado","oficina","galeria","lajes","quadra"]
+const REGIONS := ["patio","mercado","oficina","galeria","lajes","quadra"] + preload("res://scripts/world_expansion.gd").REGION_IDS
 const KINDS := ["grunt","runner","tank","exploder","spitter","screamer","hunter","armored","parasite","summoner","stealth","boss","boss_captain","boss_bulwark","boss_conductor"]
 const DOGS := ["combat","collector","support","guardian"]
 const STATUS := ["burn","corrosive","bleed","cryo","frost","freeze","shock","frenzy"]

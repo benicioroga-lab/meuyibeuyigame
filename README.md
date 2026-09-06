@@ -68,6 +68,12 @@ Se o jogo estiver pesado, selecione **Configurações → Imagem → Baixo**. O 
 
 Veja o [guia completo da versão Godot](godot/README.md) para arquitetura, sistemas e comandos dos testes.
 
+### Explorar o mapa ampliado
+
+No Pátio do Farol, siga a placa **Jardim** e use **E** no portão (120 petiscos, round 1). O **Jardim das Nascentes** tem árvores, fonte, estufa com baú, quiosque e um desafio de defesa. Pelo jardim, entre no **Shopping Aurora** (320, round 2), com lojas acessíveis, café, arsenal, oficina e mezanino com duas escadas. O **Cine Última Luz** (480, round 3) conecta o shopping à antiga Oficina Suspensa: explore bilheteria, plateia, palco e arquivo do projecionista.
+
+As nove regiões formam circuitos de exploração; os portões funcionam pelos dois lados. Saves anteriores continuam válidos e passam a oferecer os novos acessos. O mapa ampliado pertence à versão **Godot**.
+
 ## Protótipo web
 
 Survival/looter shooter solo para navegador. Meyui e Faro enfrentam a **Liga do Ruído**, uma facção fictícia, no Morro do Vento. O bairro tem inspiração arquitetônica brasileira; moradores comuns não são apresentados como inimigos.
